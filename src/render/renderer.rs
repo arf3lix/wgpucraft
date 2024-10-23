@@ -2,8 +2,7 @@ use wgpu::{BindGroup, Error};
 use instant::Instant;
 use winit::window::Window as SysWindow;
 
-use crate::scene::terrain::Terrain;
-
+use crate::world::world::World;
 use super::{consts::Consts, pipelines::{GlobalModel, GlobalsLayouts}, texture::{self, Texture}};
 pub trait Draw {
     fn draw<'a>(
@@ -19,10 +18,11 @@ pub struct Layouts {
 }
 
 
-pub struct Renderer {
-    surface: wgpu::Surface,
+pub struct Renderer<'a> {
+    surface: wgpu::Surface<'a>,
     pub device: wgpu::Device,
     pub size: winit::dpi::PhysicalSize<u32>,
+    pub window: &'a SysWindow,
     pub config: wgpu::SurfaceConfiguration,
     pub queue: wgpu::Queue,
     pub last_render_time: Instant,
@@ -30,9 +30,9 @@ pub struct Renderer {
     depth_texture: Texture
 }
 
-impl Renderer {
-    pub fn new(
-        window: &SysWindow,
+impl<'a> Renderer<'a> {
+    pub async fn new(
+        window: &'a SysWindow,
         runtime: &tokio::runtime::Runtime
     ) -> Self {
         let size = window.inner_size();
@@ -49,7 +49,7 @@ impl Renderer {
         //
         // The surface needs to live as long as the window that created it.
         // State owns the window, so this should be safe.
-        let surface = unsafe { instance.create_surface(&window) }.unwrap();
+        let surface = instance.create_surface(window).unwrap();
     
         let adapter = runtime.block_on(instance.request_adapter(
             &wgpu::RequestAdapterOptions {
@@ -59,20 +59,22 @@ impl Renderer {
             },
         )).unwrap();
 
-        let (device, queue) = runtime.block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                features: wgpu::Features::POLYGON_MODE_LINE,
-                // WebGL doesn't support all of wgpu's features, so if
-                // we're building for the web, we'll have to disable some.
-                limits: if cfg!(target_arch = "wasm32") {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
+        let (device, queue) = adapter 
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::POLYGON_MODE_LINE,
+                    required_limits: if cfg!(target_arch = "wasm32") {
+                        wgpu::Limits::downlevel_webgl2_defaults()
+                    } else {
+                        wgpu::Limits::default()
+                    },
+                    memory_hints: Default::default(),
                 },
-                label: None,
-            },
-            None, // Trace path
-        )).unwrap();
+                None,
+            ) 
+            .await 
+            .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
         // Shader code in this tutorial assumes an sRGB surface texture. Using a different
@@ -90,6 +92,7 @@ impl Renderer {
             height: size.height,
             present_mode: surface_caps.present_modes[0],
             alpha_mode: surface_caps.alpha_modes[0],
+            desired_maximum_frame_latency: 2,
             view_formats: vec![],
         };
         surface.configure(&device, &config);
@@ -104,6 +107,7 @@ impl Renderer {
             queue,
             config,
             size,
+            window,
             last_render_time,
             layouts,
             depth_texture
@@ -147,7 +151,7 @@ impl Renderer {
         consts.update(&self.queue, vals, 0)
     }
 
-    pub fn render(&mut self, terrain: &Terrain, globals: &BindGroup) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, terrain: &World, globals: &BindGroup) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

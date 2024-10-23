@@ -1,7 +1,7 @@
 use anyhow::*;
 
 use crate::render::texture::*;
-use crate::scene::terrain::block::*;
+use crate::world::block::*;
 
 use super::pipelines::GlobalsLayouts;
 
@@ -17,15 +17,28 @@ pub enum MaterialType {
 }
 
 impl MaterialType {
-    pub fn get_texture_coordinates(&self, texture_corner: [u32; 2], quad_side: QuadSide) -> [f32; 2] {
+    // Función asociada para crear un estado activo
+    pub fn is_transparent(&self) -> bool {
+        match self {
+            MaterialType::AIR => true, // Devuelve true si es AIR
+            _ => false, // Devuelve false para cualquier otro material
+        }
+    }
+}
+
+
+
+
+impl MaterialType {
+    pub fn get_texture_coordinates(&self, texture_corner: [u32; 2], quad_side: Direction) -> [f32; 2] {
         match self {
             MaterialType::GRASS => match quad_side {
-                QuadSide::TOP => atlas_pos_to_coordinates([0.0, 0.0], texture_corner),
-                QuadSide::BOTTOM => atlas_pos_to_coordinates([2.0, 0.0], texture_corner),
-                QuadSide::RIGHT => atlas_pos_to_coordinates([3.0, 0.0], texture_corner),
-                QuadSide::LEFT => atlas_pos_to_coordinates([3.0, 0.0], texture_corner),
-                QuadSide::FRONT => atlas_pos_to_coordinates([3.0, 0.0], texture_corner),
-                QuadSide::BACK => atlas_pos_to_coordinates([3.0, 0.0], texture_corner),
+                Direction::TOP => atlas_pos_to_coordinates([0.0, 0.0], texture_corner),
+                Direction::BOTTOM => atlas_pos_to_coordinates([2.0, 0.0], texture_corner),
+                Direction::RIGHT => atlas_pos_to_coordinates([3.0, 0.0], texture_corner),
+                Direction::LEFT => atlas_pos_to_coordinates([3.0, 0.0], texture_corner),
+                Direction::FRONT => atlas_pos_to_coordinates([3.0, 0.0], texture_corner),
+                Direction::BACK => atlas_pos_to_coordinates([3.0, 0.0], texture_corner),
             },
             MaterialType::DIRT => atlas_pos_to_coordinates([2.0, 0.0], texture_corner),
             MaterialType::ROCK => atlas_pos_to_coordinates([1.0, 0.0], texture_corner),

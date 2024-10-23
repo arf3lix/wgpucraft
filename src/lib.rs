@@ -1,10 +1,10 @@
 
 pub mod launcher;
 pub mod render;
-pub mod scene;
+pub mod world;
 
 use render::renderer::Renderer;
-use scene::Scene;
+use world::Scene;
 use tokio::runtime::Runtime;
 use winit::{
         event_loop::EventLoopWindowTarget,
@@ -24,19 +24,19 @@ pub enum GameState {
 
 
 
-pub struct Game {
-    pub window: Window,
-    renderer: Renderer,
+pub struct Engine<'a> {
+    pub window: &'a Window,
+    renderer: Renderer<'a>,
     scene: Scene,
     state: GameState
 
 }
 
-impl Game {
+impl<'a> Engine<'a> {
 
-    pub fn new(window: Window, runtime: Runtime) -> Self {
+    pub async fn new(window: &'a Window, runtime: Runtime) -> Self {
 
-        let mut renderer = Renderer::new(&window, &runtime);
+        let mut renderer = Renderer::new(&window, &runtime).await;
 
         let scene = Scene::new(&mut renderer);
 

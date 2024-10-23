@@ -4,11 +4,11 @@ use crate::render::atlas::MaterialType;
 
 use crate::render::pipelines::terrain::BlockVertex;
 
-use crate::scene::terrain::chunk::CHUNK_AREA;
+use crate::world::chunk::CHUNK_AREA;
 
 
 
-pub fn quad_vertex(pos: [i8; 3], material_type: MaterialType, texture_corners: [u32; 2], position: [i32; 3], quad_side: QuadSide) -> BlockVertex {
+pub fn quad_vertex(pos: [i8; 3], material_type: MaterialType, texture_corners: [u32; 2], position: [i32; 3], quad_side: Direction) -> BlockVertex {
     let tc = material_type.get_texture_coordinates(texture_corners, quad_side);
     BlockVertex {
         pos: [
@@ -21,7 +21,7 @@ pub fn quad_vertex(pos: [i8; 3], material_type: MaterialType, texture_corners: [
 }
 
 #[derive(Copy, Clone, Debug)]
-pub enum QuadSide {
+pub enum Direction {
     TOP,
     BOTTOM,
     RIGHT,
@@ -30,51 +30,51 @@ pub enum QuadSide {
     BACK,
 }
 
-impl QuadSide {
+impl Direction {
     pub fn to_vec(self) -> Vector3<i32> {
         match self {
-            QuadSide::TOP => Vector3::new(0, 1, 0),
-            QuadSide::BOTTOM => Vector3::new(0, -1, 0),
-            QuadSide::RIGHT => Vector3::new(1, 0, 0),
-            QuadSide::LEFT => Vector3::new(-1, 0, 0),
-            QuadSide::FRONT => Vector3::new(0, 0, 1),
-            QuadSide::BACK => Vector3::new(0, 0, -1),
+            Direction::TOP => Vector3::new(0, 1, 0),
+            Direction::BOTTOM => Vector3::new(0, -1, 0),
+            Direction::RIGHT => Vector3::new(1, 0, 0),
+            Direction::LEFT => Vector3::new(-1, 0, 0),
+            Direction::FRONT => Vector3::new(0, 0, 1),
+            Direction::BACK => Vector3::new(0, 0, -1),
         }
     }
 
     fn get_vertices(self, material_type: MaterialType, position: [i32; 3]) -> [BlockVertex; 4] {
         match self {
-            QuadSide::TOP => [
+            Direction::TOP => [
                 quad_vertex([0, 1, 0], material_type, [0, 0], position, self),
                 quad_vertex([0, 1, 1], material_type, [0, 1], position, self),
                 quad_vertex([1, 1, 1], material_type, [1, 1], position, self),
                 quad_vertex([1, 1, 0], material_type, [1, 0], position, self),
             ],
-            QuadSide::BOTTOM => [
+            Direction::BOTTOM => [
                 quad_vertex([0, 0, 1], material_type, [0, 0], position, self),
                 quad_vertex([0, 0, 0], material_type, [0, 1], position, self),
                 quad_vertex([1, 0, 0], material_type, [1, 1], position, self),
                 quad_vertex([1, 0, 1], material_type, [1, 0], position, self),
             ],
-            QuadSide::RIGHT => [
+            Direction::RIGHT => [
                 quad_vertex([1, 1, 1], material_type, [0, 0], position, self),
                 quad_vertex([1, 0, 1], material_type, [0, 1], position, self),
                 quad_vertex([1, 0, 0], material_type, [1, 1], position, self),
                 quad_vertex([1, 1, 0], material_type, [1, 0], position, self),
             ],
-            QuadSide::LEFT => [
+            Direction::LEFT => [
                 quad_vertex([0, 1, 0], material_type, [0, 0], position, self),
                 quad_vertex([0, 0, 0], material_type, [0, 1], position, self),
                 quad_vertex([0, 0, 1], material_type, [1, 1], position, self),
                 quad_vertex([0, 1, 1], material_type, [1, 0], position, self),
             ],
-            QuadSide::FRONT => [
+            Direction::FRONT => [
                 quad_vertex([0, 1, 1], material_type, [0, 0], position, self),
                 quad_vertex([0, 0, 1], material_type, [0, 1], position, self),
                 quad_vertex([1, 0, 1], material_type, [1, 1], position, self),
                 quad_vertex([1, 1, 1], material_type, [1, 0], position, self),
             ],
-            QuadSide::BACK => [
+            Direction::BACK => [
                 quad_vertex([1, 1, 0], material_type, [0, 0], position, self),
                 quad_vertex([1, 0, 0], material_type, [0, 1], position, self),
                 quad_vertex([0, 0, 0], material_type, [1, 1], position, self),
@@ -87,15 +87,26 @@ impl QuadSide {
 #[derive(Copy, Clone, Debug)]
 pub struct Quad {
     pub vertices: [BlockVertex; 4],
-    pub side: QuadSide,
+    pub side: Direction,
 }
 
 impl Quad {
-    fn new(material_type: MaterialType, quad_side: QuadSide, position: [i32; 3]) -> Self {
+    pub fn new(material_type: MaterialType, quad_side: Direction, position: [i32; 3]) -> Self {
         Self {
             vertices: quad_side.get_vertices(material_type, position),
             side: quad_side,
         }
+    }
+
+    pub fn get_indices_v(&self, vertex_offset: u16) -> [u16; 6] {
+        [
+            vertex_offset,
+            vertex_offset + 1,
+            vertex_offset + 2,
+            vertex_offset + 2,
+            vertex_offset + 3,
+            vertex_offset,
+        ]
     }
 
     pub fn get_indices(&self, i: u16) -> [u16; 6] {
@@ -131,6 +142,14 @@ impl Block {
         }
     }
 
+    pub fn is_transparent(&self) -> bool {
+        self.material_type == MaterialType::AIR || self.material_type == MaterialType::WATER
+    }
+
+    pub fn is_solid(&self) -> bool {
+        !self.is_transparent()
+    }
+
     pub fn get_vec_position(&self) -> Vector3<i32>{
         Vector3::new(self.position[0], self.position[1], self.position[2])
     }
@@ -144,6 +163,15 @@ impl Block {
     //     world_pos
     // }
 
+    // Get the world position of the block
+    pub fn get_world_position(&self) -> [i32; 3] {
+        [
+            self.position[0] + (self.chunk_offset[0] * CHUNK_AREA as i32),
+            self.position[1],
+            self.position[2] + (self.chunk_offset[2] * CHUNK_AREA as i32),
+        ]
+    }
+
     fn generate_quads(material_type: MaterialType, position: [i32; 3], chunk_offset: [i32; 3]) -> [Quad; 6] {
         let world_pos = [
             position[0] + (chunk_offset[0] * CHUNK_AREA as i32),
@@ -151,12 +179,12 @@ impl Block {
             position[2] + (chunk_offset[2] * CHUNK_AREA as i32),
         ];
 
-        let top = Quad::new(material_type, QuadSide::TOP, world_pos);
-        let bottom = Quad::new(material_type, QuadSide::BOTTOM, world_pos);
-        let right = Quad::new(material_type, QuadSide::RIGHT, world_pos);
-        let left = Quad::new(material_type, QuadSide::LEFT, world_pos);
-        let front = Quad::new(material_type, QuadSide::FRONT, world_pos);
-        let back = Quad::new(material_type, QuadSide::BACK, world_pos);
+        let top = Quad::new(material_type, Direction::TOP, world_pos);
+        let bottom = Quad::new(material_type, Direction::BOTTOM, world_pos);
+        let right = Quad::new(material_type, Direction::RIGHT, world_pos);
+        let left = Quad::new(material_type, Direction::LEFT, world_pos);
+        let front = Quad::new(material_type, Direction::FRONT, world_pos);
+        let back = Quad::new(material_type, Direction::BACK, world_pos);
 
         [top, bottom, right, left, front, back]
     }

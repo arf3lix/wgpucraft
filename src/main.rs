@@ -1,6 +1,6 @@
 use wgpucraft::launcher::run;
 
 fn main() {
-    run();
+    pollster::block_on(run());
 }
- 
+    

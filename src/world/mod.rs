@@ -1,14 +1,17 @@
+use camera::Camera;
 use cgmath::point3;
 use wgpu::BindGroup;
 use winit::event::WindowEvent;
+use world::World;
+
 
 use crate::{render::{pipelines::{GlobalModel, Globals}, renderer::Renderer}, GameState};
 
-use self::{camera::Camera, terrain::Terrain};
 
+pub mod world;
 pub mod camera;
-pub mod terrain;
-
+pub mod block;
+pub mod chunk;
 
 
 
@@ -16,7 +19,7 @@ pub struct Scene {
     pub data: GlobalModel,
     pub globals_bind_group: BindGroup,
     pub camera: Camera,
-    pub terrain: Terrain,
+    pub terrain: World,
     pub last_player_pos: cgmath::Point3<f32>
 }
 
@@ -37,7 +40,7 @@ impl Scene {
 
         let camera = Camera::new(&renderer, (8.0, 12.0, 8.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
 
-        let terrain = Terrain::new(
+        let terrain = World::new(
             &renderer,
         );
 

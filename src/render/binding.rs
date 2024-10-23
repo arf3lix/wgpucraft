@@ -4,7 +4,7 @@ use wgpu::BindGroup;
 
 use crate::render::{renderer::Renderer, texture::Texture};
 
-impl Renderer {
+impl<'a> Renderer<'a> {
 
 
     pub fn bind_atlas_texture(
