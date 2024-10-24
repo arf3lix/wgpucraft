@@ -1,10 +1,8 @@
 
-use crate::{render::renderer::Renderer, world::biomes::{BiomeParameters, PRAIRIE_PARAMS}};
+use std::{collections::VecDeque, sync::{Arc, RwLock, Barrier}};
+use rayon::ThreadPoolBuilder;
 
-
-use std::{collections::VecDeque, sync::{Arc, RwLock}};
-
-use crate::render::{atlas::{Atlas, MaterialType}, mesh::Mesh, model::DynamicModel, pipelines::terrain::{BlockVertex, TerrainPipeline}, renderer::Draw};
+use crate::{render::{atlas::{Atlas, MaterialType}, mesh::Mesh, model::DynamicModel, pipelines::terrain::{BlockVertex, TerrainPipeline}, renderer::{Draw, Renderer}}, world::biomes::PRAIRIE_PARAMS};
 use crate::render::pipelines::GlobalsLayouts;
 use crate::world::chunk::{self, generate_chunk, Blocks, ChunkArray, CHUNK_AREA, CHUNK_Y_SIZE};
 
@@ -16,7 +14,7 @@ use wgpu::Queue;
 
 
 pub const LAND_LEVEL: usize = 9;
-pub const CHUNKS_VIEW_SIZE: usize = 12;
+pub const CHUNKS_VIEW_SIZE: usize = 16;
 pub const CHUNKS_ARRAY_SIZE: usize = CHUNKS_VIEW_SIZE * CHUNKS_VIEW_SIZE;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -42,7 +40,7 @@ pub struct World {
     pub chunks: ChunkArray,
     chunk_indices: Arc<RwLock<[Option<usize>; CHUNKS_ARRAY_SIZE]>>,
     free_chunk_indices: Arc<RwLock<VecDeque<usize>>>,
-    //updated_indices: Arc<RwLock<[bool; CHUNKS_ARRAY_SIZE]>>,
+    updated_indices: Arc<RwLock<[bool; CHUNKS_ARRAY_SIZE]>>,
     center_offset: Vector3<i32>,
     chunks_origin: Vector3<i32>,
     chunk_models: Vec<DynamicModel<BlockVertex>>
@@ -58,7 +56,7 @@ impl World {
         let mut chunk_models = vec![];
         let mut chunks:ChunkArray = ChunkArray::default();
         let chunk_indices: [Option<usize>; CHUNKS_ARRAY_SIZE] = [None; CHUNKS_ARRAY_SIZE];
-        //let updated_indices = Arc::new(RwLock::new([false; CHUNKS_ARRAY_SIZE]));
+        let updated_indices = Arc::new(RwLock::new([false; CHUNKS_ARRAY_SIZE]));
         let mut free_chunk_indices = VecDeque::new();
 
 
@@ -79,7 +77,7 @@ impl World {
         );
 
 
-        let world_pipeline = TerrainPipeline::new(
+        let World_pipeline = TerrainPipeline::new(
             &renderer.device,
             &global_layouts,
             shader,
@@ -91,27 +89,82 @@ impl World {
         let chunks_origin = center_offset - Vector3::new(CHUNKS_VIEW_SIZE as i32 / 2, 0, CHUNKS_VIEW_SIZE as i32 / 2);
 
 
-        let mut world = Self {
-            pipeline: world_pipeline.pipeline,
+        let mut World = Self {
+            pipeline: World_pipeline.pipeline,
             atlas,
             chunks,
             chunk_models,
             center_offset,
             chunks_origin,
-            //updated_indices,
+            updated_indices,
             chunk_indices: Arc::new(RwLock::new(chunk_indices)),
             free_chunk_indices: Arc::new(RwLock::new(free_chunk_indices))
         };
 
 
         println!("about to load first chunks");
-        world.load_empty_chunks(&renderer.queue);
+        World.load_initial_chunks(&renderer.queue);
 
 
-        world
+        World
     }
 
 
+
+
+
+
+    pub fn load_initial_chunks(&mut self, queue: &Queue) {
+        let chunks_to_update: Vec<usize> = (0..CHUNKS_ARRAY_SIZE)
+            .filter(|&i| self.chunk_indices.read().unwrap()[i].is_none())
+            .collect();
+
+        // Primer bucle: Generar los chunks
+        for i in chunks_to_update.iter() {
+            let new_index = self.free_chunk_indices.write().unwrap().pop_front();
+            if let Some(new_index) = new_index {
+                let chunk_offset = self.get_chunk_offset(*i);
+                if !self.chunk_in_bounds(chunk_offset) {
+                    panic!("Error: Cannot load chunk");
+                }
+                
+                *self.chunks.offset_array[new_index].write().unwrap() = chunk_offset.into();
+                
+                generate_chunk(
+                    &mut self.chunks.blocks_array[new_index].write().unwrap(),
+                    chunk_offset.into(),
+                    10,
+                    &PRAIRIE_PARAMS
+                );
+
+                self.chunk_indices.write().unwrap()[*i] = Some(new_index);
+            } else {
+                panic!("Error: No free space for chunk");
+            }
+        }
+
+        // Segundo bucle: Calcular los meshes
+        for i in chunks_to_update.iter() {
+            if let Some(new_index) = self.chunk_indices.read().unwrap()[*i] {
+                let chunk_offset = self.get_chunk_offset(*i);
+                let mesh = self.update_mesh(
+                    &self.chunks.blocks_array[new_index].read().unwrap(),
+                    0,
+                    0,
+                    chunk_offset,
+                );
+                *self.chunks.mesh_array[new_index].write().unwrap() = mesh;
+            }
+        }
+
+        // Actualizar los modelos de chunk
+        (0..CHUNKS_ARRAY_SIZE).for_each(|i| {
+            //self.chunk_models[i].update(queue, &self.chunks[i].read().unwrap().mesh, 0);
+            self.chunk_models[i].update(queue, &self.chunks.mesh_array[i].read().unwrap(), 0);
+        });
+
+        println!("---------------------------------");
+    }
 
 
 
@@ -190,7 +243,6 @@ impl World {
 
 
 
-
     pub fn update_mesh(&self, blocks: &Blocks, index: usize, thread_id:usize, chunk_offset:Vector3<i32>) -> Mesh<BlockVertex> {
 
 
@@ -265,7 +317,7 @@ impl World {
     }
 
     // Get the block from a neighboring chunk, if it exists.
-    fn get_block_from_neighboring_chunk(&self, neighbor_pos: Vector3<i32>, _index: usize, thread_id:usize, chunk_offset_orig:Vector3<i32>) -> Option<MaterialType> {
+    fn get_block_from_neighboring_chunk(&self, neighbor_pos: Vector3<i32>, indexss: usize, thread_id:usize, chunk_offset_orig:Vector3<i32>) -> Option<MaterialType> {
         //println!("out of bounds condition  | at thread: {:?}", thread_id);
 
         
@@ -400,10 +452,10 @@ impl World {
         self.load_empty_chunks(queue);
     }
 
-    // fn is_inner_chunk(&self, chunk_offset: Vector3<i32>) -> bool {
-    //     let p = chunk_offset - self.chunks_origin;
-    //     p.x > 0 && p.z > 0 && p.x < (CHUNKS_VIEW_SIZE as i32 - 1) && p.z < (CHUNKS_VIEW_SIZE as i32 - 1)
-    // }
+    fn is_inner_chunk(&self, chunk_offset: Vector3<i32>) -> bool {
+        let p = chunk_offset - self.chunks_origin;
+        p.x > 0 && p.z > 0 && p.x < (CHUNKS_VIEW_SIZE as i32 - 1) && p.z < (CHUNKS_VIEW_SIZE as i32 - 1)
+    }
 
 
 
