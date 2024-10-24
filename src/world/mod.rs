@@ -12,6 +12,8 @@ pub mod world;
 pub mod camera;
 pub mod block;
 pub mod chunk;
+pub mod biomes;
+pub mod noise;
 
 
 

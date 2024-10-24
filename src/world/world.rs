@@ -1,5 +1,5 @@
 
-use crate::render::renderer::Renderer;
+use crate::{render::renderer::Renderer, world::biomes::{BiomeParameters, PRAIRIE_PARAMS}};
 
 
 use std::{collections::VecDeque, sync::{Arc, RwLock}};
@@ -16,7 +16,7 @@ use wgpu::Queue;
 
 
 pub const LAND_LEVEL: usize = 9;
-pub const CHUNKS_VIEW_SIZE: usize = 3;
+pub const CHUNKS_VIEW_SIZE: usize = 12;
 pub const CHUNKS_ARRAY_SIZE: usize = CHUNKS_VIEW_SIZE * CHUNKS_VIEW_SIZE;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -148,6 +148,8 @@ impl World {
                     generate_chunk(
                         &mut self.chunks.blocks_array[new_index].write().unwrap(),
                         chunk_offset.into(),
+                        10,
+                        &PRAIRIE_PARAMS
                     );
                     println!("just gen chunk at thread_id {:?}", thread_id);
 

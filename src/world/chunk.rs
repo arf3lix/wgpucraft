@@ -8,7 +8,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use crate::render::{atlas::MaterialType, mesh::Mesh, pipelines::terrain::BlockVertex};
 
 
-use super::block::{Block, Direction};
+use super::{biomes::BiomeParameters, block::{Block, Direction}, noise::NoiseGenerator, world::LAND_LEVEL};
 
 
 pub const CHUNK_Y_SIZE:usize = 100;
@@ -237,7 +237,7 @@ impl ChunkArray {
 }
 
 
-pub fn generate_chunk(blocks: &mut Blocks, offset: [i32; 3]) {
+pub fn generate_chunk2(blocks: &mut Blocks, offset: [i32; 3]) {
     (0..TOTAL_CHUNK_SIZE).into_par_iter().for_each(|i| {
         let z = i / (CHUNK_AREA * CHUNK_Y_SIZE);
         let y = (i - z * CHUNK_AREA * CHUNK_Y_SIZE) / CHUNK_AREA;
@@ -270,4 +270,38 @@ pub fn generate_chunk(blocks: &mut Blocks, offset: [i32; 3]) {
         blocks[y][x][z].lock().unwrap().update(block_type, offset);
     });
 }
+
+pub fn generate_chunk(blocks: &mut Blocks, offset: [i32; 3], seed: u32, biome: &BiomeParameters) {
+    let noise_generator = NoiseGenerator::new(seed);
+
+    (0..TOTAL_CHUNK_SIZE).into_par_iter().for_each(|i| {
+        let z = i / (CHUNK_AREA * CHUNK_Y_SIZE);
+        let y = (i - z * CHUNK_AREA * CHUNK_Y_SIZE) / CHUNK_AREA;
+        let x = i % CHUNK_AREA;
+        let world_pos = local_pos_to_world(offset, Vector3::new(x as i32, y as i32, z as i32));
+
+        let height_variation = noise_generator.get_height(world_pos.x as f32, world_pos.z as f32, biome.frequency, biome.amplitude);
+        let new_height = (biome.base_height + height_variation).round() as usize;
+
+        //let new_height = y;
+
+        let block_type = if y > new_height {
+            if y <= LAND_LEVEL {
+                MaterialType::WATER
+            } else {
+                MaterialType::AIR
+            }
+        } else if y == new_height {
+            MaterialType::GRASS
+        } else if y == 0 {
+            MaterialType::ROCK
+        } else {
+            MaterialType::DIRT
+        };
+
+        blocks[y][x][z].lock().unwrap().update(block_type, offset);
+    });
+}
+
+
 
