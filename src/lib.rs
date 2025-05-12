@@ -89,7 +89,8 @@ impl<'a> Engine<'a> {
                 self.state = match self.state {
                     GameState::PAUSED =>
                     {
-                        self.window.set_cursor_grab(winit::window::CursorGrabMode::Locked).unwrap();
+                        // in windows os this doesnt work
+                        // self.window.set_cursor_grab(winit::window::CursorGrabMode::Locked).unwrap();
                         self.window.set_cursor_visible(false);
                         GameState::PLAYING
                     },
@@ -120,7 +121,8 @@ impl<'a> Engine<'a> {
 
     pub fn initialize(&mut self) {
         self.window.set_cursor_visible(false);
-        self.window.set_cursor_grab(winit::window::CursorGrabMode::Locked).unwrap();
+        // in windows os this doesnt work
+        // self.window.set_cursor_grab(winit::window::CursorGrabMode::Locked).unwrap();
         let center = winit::dpi::PhysicalPosition::new(self.renderer.size.width / 2, self.renderer.size.height / 2);
         self.window.set_cursor_position(center).unwrap_or_else(|e| {
             eprintln!("Failed to set cursor position: {:?}", e);
