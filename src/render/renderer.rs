@@ -31,9 +31,8 @@ pub struct Renderer<'a> {
 }
 
 impl<'a> Renderer<'a> {
-    pub async fn new(
+    pub fn new(
         window: &'a SysWindow,
-        runtime: &tokio::runtime::Runtime
     ) -> Self {
         let size = window.inner_size();
         let last_render_time = instant::Instant::now();
@@ -51,7 +50,7 @@ impl<'a> Renderer<'a> {
         // State owns the window, so this should be safe.
         let surface = instance.create_surface(window).unwrap();
     
-        let adapter = runtime.block_on(instance.request_adapter(
+        let adapter = pollster::block_on(instance.request_adapter(
             &wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 compatible_surface: Some(&surface),
@@ -59,7 +58,7 @@ impl<'a> Renderer<'a> {
             },
         )).unwrap();
 
-        let (device, queue) = adapter 
+        let (device, queue) = pollster::block_on(adapter 
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
@@ -73,7 +72,7 @@ impl<'a> Renderer<'a> {
                 },
                 None,
             ) 
-            .await 
+        ) 
             .unwrap();
 
         let surface_caps = surface.get_capabilities(&adapter);
