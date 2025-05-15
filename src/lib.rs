@@ -5,12 +5,12 @@ pub mod world;
 
 use render::renderer::Renderer;
 use world::Scene;
-use tokio::runtime::Runtime;
 use winit::{
         event_loop::EventLoopWindowTarget,
         event::{WindowEvent, DeviceEvent, KeyEvent, ElementState},
         keyboard::{PhysicalKey, KeyCode},
-        window::Window
+        window::{Window, CursorGrabMode},
+        dpi::PhysicalPosition
     };
 
 
@@ -34,9 +34,9 @@ pub struct Engine<'a> {
 
 impl<'a> Engine<'a> {
 
-    pub async fn new(window: &'a Window, runtime: Runtime) -> Self {
+    pub fn new(window: &'a Window) -> Self {
 
-        let mut renderer = Renderer::new(&window, &runtime).await;
+        let mut renderer = Renderer::new(&window);
 
         let scene = Scene::new(&mut renderer);
 
@@ -89,8 +89,13 @@ impl<'a> Engine<'a> {
                 self.state = match self.state {
                     GameState::PAUSED =>
                     {
-                        // in windows os this doesnt work
-                        // self.window.set_cursor_grab(winit::window::CursorGrabMode::Locked).unwrap();
+                        self.window.set_cursor_position(PhysicalPosition::new(self.renderer.size.width / 2, self.renderer.size.height / 2))
+                            .expect("No se pudo mover el cursor");
+
+                        // Ahora intenta bloquear el cursor
+                        self.window.set_cursor_grab(CursorGrabMode::Confined)
+                            .expect("No se pudo bloquear el cursor");
+
                         self.window.set_cursor_visible(false);
                         GameState::PLAYING
                     },
@@ -122,7 +127,14 @@ impl<'a> Engine<'a> {
     pub fn initialize(&mut self) {
         self.window.set_cursor_visible(false);
         // in windows os this doesnt work
-        // self.window.set_cursor_grab(winit::window::CursorGrabMode::Locked).unwrap();
+        self.window.set_cursor_position(PhysicalPosition::new(self.renderer.size.width / 2, self.renderer.size.height / 2))
+            .expect("No se pudo mover el cursor");
+
+        // Ahora intenta bloquear el cursor
+        self.window.set_cursor_grab(CursorGrabMode::Confined)
+            .expect("No se pudo bloquear el cursor");
+
+
         let center = winit::dpi::PhysicalPosition::new(self.renderer.size.width / 2, self.renderer.size.height / 2);
         self.window.set_cursor_position(center).unwrap_or_else(|e| {
             eprintln!("Failed to set cursor position: {:?}", e);
