@@ -11,62 +11,54 @@ use crate::render::{atlas::MaterialType, mesh::Mesh, pipelines::terrain::BlockVe
 use super::{biomes::BiomeParameters, block::{Block, Direction}, noise::NoiseGenerator, world::LAND_LEVEL};
 
 
-pub const CHUNK_Y_SIZE:usize = 100;
-pub const CHUNK_AREA:usize =16;
-pub const TOTAL_CHUNK_SIZE: usize = CHUNK_Y_SIZE * CHUNK_AREA * CHUNK_AREA;
+pub const CHUNK_Y_SIZE: usize = 100;
+pub const CHUNK_AREA: usize = 16;
+pub const CHUNK_AREA_WITH_PADDING: usize = CHUNK_AREA + 2; // +1 en cada lado
+pub const TOTAL_CHUNK_SIZE: usize = CHUNK_Y_SIZE * CHUNK_AREA_WITH_PADDING * CHUNK_AREA_WITH_PADDING;
 
 
-pub type Blocks = Vec<Vec<Vec<Arc<Mutex<Block>>>>>;
+pub type Blocks = Vec<Vec<Vec<Block>>>;
 
 
 
 
 fn init_blocks(offset: [i32; 3]) -> Blocks {
-
-
     let mut blocks = vec![
         vec![
             vec![
-                Arc::new(
-                    Mutex::new(
-                        Block::new(
-                            MaterialType::DEBUG,
-                            [0, 0, 0],
-                            offset
-                        )
-                    )
+                Block::new(
+                    MaterialType::DEBUG,
+                    [0, 0, 0],
+                    offset
                 )
-                ; CHUNK_AREA
-            ]; CHUNK_AREA
+                ; CHUNK_AREA_WITH_PADDING
+            ]; CHUNK_AREA_WITH_PADDING
         ]; CHUNK_Y_SIZE
     ];
    
-    // Assuming CHUNK_Y_SIZE is a usize or similar that represents the height.
-    for y in 0..CHUNK_Y_SIZE{
-        for z in 0..CHUNK_AREA {
-            for x in 0..CHUNK_AREA {
-                let position = cgmath::Vector3 { x: x as i32, y: y as i32, z: z as i32 };
-                let material_type =
-                if y < 12 {
+    for y in 0..CHUNK_Y_SIZE {
+        for z in 0..CHUNK_AREA_WITH_PADDING {
+            for x in 0..CHUNK_AREA_WITH_PADDING {
+                let position = Vector3 { 
+                    x: x as i32 - 1,  // -1 para que el padding izquierdo sea x=-1
+                    y: y as i32, 
+                    z: z as i32 - 1   // -1 para que el padding frontal sea z=-1
+                };
+                
+                let material_type = if y < 12 {
                     MaterialType::DEBUG
-                }
-                else if y == 12{
+                } else if y == 12 {
                     MaterialType::DEBUG
-                }
-                else {
+                } else {
                     MaterialType::AIR
                 };
 
-
-                blocks[y][x][z] = Arc::new(Mutex::new(Block::new(material_type, position.into(), offset)));
+                blocks[y][x][z] = Block::new(material_type, position.into(), offset);
             }
         }
     }
 
-
     blocks
-
-
 }
 
 
@@ -102,206 +94,67 @@ impl ChunkArray {
         return self;
     }
 
-    fn get_block_at(&self, pos: Vector3<i32>, chunk_offset: &[i32; 3]) -> Option<Arc<Mutex<Block>>> {
-        let (x, y, z) = (pos.x, pos.y, pos.z);
 
-        if y < 0 || y >= CHUNK_Y_SIZE as i32 {
-            // Outside vertical bounds
-            return None;
-        }
-
-        let mut local_x = x;
-        let mut local_z = z;
-        let mut local_chunk_offset = chunk_offset.clone();
-
-        // Adjust for x-axis
-        if x < 0 {
-            local_x += CHUNK_AREA as i32;
-            local_chunk_offset[0] -= 1;
-        } else if x >= CHUNK_AREA as i32 {
-            local_x -= CHUNK_AREA as i32;
-            local_chunk_offset[0] += 1;
-        }
-
-        // Adjust for z-axis
-        if z < 0 {
-            local_z += CHUNK_AREA as i32;
-            local_chunk_offset[2] -= 1;
-        } else if z >= CHUNK_AREA as i32 {
-            local_z -= CHUNK_AREA as i32;
-            local_chunk_offset[2] += 1;
-        }
-
-        // Get chunk index by offset
-        let chunk_index = self.get_chunk_index_by_offset(&local_chunk_offset)?;
-
-        let blocks = self.blocks_array[chunk_index].read().unwrap();
-        Some(blocks[y as usize][local_x as usize][local_z as usize].clone())
-    }
-
-    fn get_chunk_index_by_offset(&self, offset: &[i32; 3]) -> Option<usize> {
+    pub fn get_chunk_index_by_offset(&self, offset: &[i32; 3]) -> Option<usize> {
         self.offset_array.iter().position(|chunk_offset| {
             *chunk_offset.read().unwrap() == *offset
         })
     }
 
-    fn should_render_face(&self, blocks: &Blocks, pos: (i32, i32, i32), direction: Direction, chunk_offset: &[i32; 3]) -> bool {
-        let dir_vec = direction.to_vec();
-        let neighbor_pos = Vector3::new(pos.0, pos.1, pos.2) + dir_vec;
-
-        if neighbor_pos.y < 0 || neighbor_pos.y >= CHUNK_Y_SIZE as i32 {
-            // Faces at the top and bottom are visible
-            return true;
-        }
-
-        if neighbor_pos.x >= 0 && neighbor_pos.x < CHUNK_AREA as i32 && neighbor_pos.z >= 0 && neighbor_pos.z < CHUNK_AREA as i32 {
-            // Neighbor is within the same chunk
-            let neighbor_block = blocks[neighbor_pos.y as usize][neighbor_pos.x as usize][neighbor_pos.z as usize].lock().unwrap();
-            return neighbor_block.is_transparent();
-        } else {
-            // Neighbor is in a different chunk
-            if let Some(neighbor_block) = self.get_block_at(neighbor_pos, chunk_offset) {
-                let neighbor_block = neighbor_block.lock().unwrap();
-                return neighbor_block.is_transparent();
-            } else {
-                // Neighboring chunk is not loaded; assume the face is visible
-                return true;
-            }
-        }
-    }
-
-    pub fn generate_chunk_mesh(&self, chunk_index: usize) {
-        let blocks = self.blocks_array[chunk_index].read().unwrap();
-        let offset = self.offset_array[chunk_index].read().unwrap();
-        let mut mesh = Mesh::new();
-
-        let mut vertex_offset = 0u16;
-
-        for y in 0..CHUNK_Y_SIZE {
-            for z in 0..CHUNK_AREA {
-                for x in 0..CHUNK_AREA {
-                    let block = blocks[y][x][z].lock().unwrap();
-
-                    if !block.is_solid() {
-                        continue; // Skip non-solid blocks
-                    }
-
-                    let block_pos = (x as i32, y as i32, z as i32);
-
-                    for &direction in &[
-                        Direction::TOP,
-                        Direction::BOTTOM,
-                        Direction::RIGHT,
-                        Direction::LEFT,
-                        Direction::FRONT,
-                        Direction::BACK,
-                    ] {
-                        if self.should_render_face(&blocks, block_pos, direction, &offset) {
-                            let quad = &block.quads[direction as usize];
-
-                            mesh.verts.extend_from_slice(&quad.vertices);
-
-                            let indices = quad.get_indices(vertex_offset);
-                            mesh.indices.extend_from_slice(&indices);
-
-                            vertex_offset += 4; // Each quad has 4 vertices
-                        }
-                    }
-                }
-            }
-        }
-
-        // Update the mesh in the mesh_array
-        *self.mesh_array[chunk_index].write().unwrap() = mesh;
-    }
-
-
-
-
-
-
-
 
     pub fn pos_in_chunk_bounds(pos: Vector3<i32>) -> bool {
-        if pos.x >= 0 && pos.y >= 0 && pos.z >= 0 {
-            if pos.x < CHUNK_AREA as i32 && pos.y < CHUNK_Y_SIZE as i32 && pos.z < CHUNK_AREA as i32 {
-                return true;
-            }
-        }
-        return false;
+        // Ahora acepta posiciones desde -1 hasta CHUNK_AREA (0..15 es el área interna, -1 y 16 son padding)
+        pos.x >= -1 && pos.y >= 0 && pos.z >= -1 &&
+        pos.x <= CHUNK_AREA as i32 && 
+        pos.y < CHUNK_Y_SIZE as i32 && 
+        pos.z <= CHUNK_AREA as i32
     }
-
 
 
    
 }
 
 
-pub fn generate_chunk2(blocks: &mut Blocks, offset: [i32; 3]) {
-    (0..TOTAL_CHUNK_SIZE).into_par_iter().for_each(|i| {
-        let z = i / (CHUNK_AREA * CHUNK_Y_SIZE);
-        let y = (i - z * CHUNK_AREA * CHUNK_Y_SIZE) / CHUNK_AREA;
-        let x = i % CHUNK_AREA;
-
-
-        // Función matemática simple para generar un terreno 3D con colinas suaves
-        let base_height = 10.0;
-        let frequency = 0.1;
-        let amplitude = 5.0;
-        
-        let height_variation = (x as f32 * frequency).sin() + (z as f32 * frequency).sin();
-        let new_height = (base_height + height_variation * amplitude).round() as usize;
-
-        let block_type = if y > new_height {
-            if y <=     12 {
-                MaterialType::WATER
-            } else {
-                MaterialType::AIR
-            }
-        } else if y == new_height {
-            MaterialType::GRASS
-        } else if y == 0 {
-            MaterialType::ROCK
-        } else {
-            MaterialType::DIRT
-        };
-
-
-        blocks[y][x][z].lock().unwrap().update(block_type, offset);
-    });
-}
-
 pub fn generate_chunk(blocks: &mut Blocks, offset: [i32; 3], seed: u32, biome: &BiomeParameters) {
+    tracy_client::span!("generate chunk: full scope"); // Span por hilo
+
     let noise_generator = NoiseGenerator::new(seed);
 
-    (0..TOTAL_CHUNK_SIZE).into_par_iter().for_each(|i| {
-        let z = i / (CHUNK_AREA * CHUNK_Y_SIZE);
-        let y = (i - z * CHUNK_AREA * CHUNK_Y_SIZE) / CHUNK_AREA;
-        let x = i % CHUNK_AREA;
-        let world_pos = local_pos_to_world(offset, Vector3::new(x as i32, y as i32, z as i32));
+    for y in 0..CHUNK_Y_SIZE {
+        for x in 0..CHUNK_AREA_WITH_PADDING {
+            for z in 0..CHUNK_AREA_WITH_PADDING {
+                // Convertir coordenadas con padding a coordenadas de mundo
+                let local_x = x as i32 - 1;
+                let local_z = z as i32 - 1;
+                let world_pos = local_pos_to_world(offset, Vector3::new(local_x, y as i32, local_z));
+                let height_variation = noise_generator.get_height(world_pos.x as f32, world_pos.z as f32, biome.frequency, biome.amplitude);
+                let new_height = (biome.base_height + height_variation).round() as usize;
 
-        let height_variation = noise_generator.get_height(world_pos.x as f32, world_pos.z as f32, biome.frequency, biome.amplitude);
-        let new_height = (biome.base_height + height_variation).round() as usize;
+                //let new_height = y;
 
-        //let new_height = y;
+                let block_type = if y > new_height {
+                    if y <= LAND_LEVEL {
+                        MaterialType::WATER
+                    } else {
+                        MaterialType::AIR
+                    }
+                } else if y == new_height {
+                    MaterialType::GRASS
+                } else if y == 0 {
+                    MaterialType::ROCK
+                } else {
+                    MaterialType::DIRT
+                };
 
-        let block_type = if y > new_height {
-            if y <= LAND_LEVEL {
-                MaterialType::WATER
-            } else {
-                MaterialType::AIR
+                blocks[y][x][z].update(block_type, offset);
             }
-        } else if y == new_height {
-            MaterialType::GRASS
-        } else if y == 0 {
-            MaterialType::ROCK
-        } else {
-            MaterialType::DIRT
-        };
-
-        blocks[y][x][z].lock().unwrap().update(block_type, offset);
-    });
+        }
+    };
 }
 
 
-
+pub fn generate_blocks_independent(offset: [i32; 3], seed: u32, biome: &BiomeParameters) -> Blocks {
+    let mut blocks = Blocks::new();
+    generate_chunk(&mut blocks, offset, seed, biome);
+    blocks
+}
