@@ -1,5 +1,6 @@
 
 pub mod terrain;
+pub mod hud;
 
 use bytemuck::{Pod, Zeroable};
 use cgmath::{Matrix4, SquareMatrix};
@@ -48,7 +49,9 @@ pub struct GlobalModel {
 
 pub struct GlobalsLayouts {
     pub globals: wgpu::BindGroupLayout,
-    pub atlas_layout: wgpu::BindGroupLayout
+    pub atlas_layout: wgpu::BindGroupLayout,
+    pub hud_layout: wgpu::BindGroupLayout,
+
 }
 
 impl GlobalsLayouts {
@@ -96,9 +99,35 @@ impl GlobalsLayouts {
             label: Some("atlas_bind_group_layout"),
         });
 
+        // Nuevo layout específico para el HUD (con filtrado)
+        let hud_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            entries: &[
+                // Sampler con filtrado para mejor calidad en UI
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+            ],
+            label: Some("hud_bind_group_layout"),
+        });
+
         Self {
             globals,
-            atlas_layout
+            atlas_layout,
+            hud_layout, // Añadimos el nuevo layout
         }
     }
 
@@ -149,5 +178,31 @@ impl GlobalsLayouts {
         });
 
         bind_group
+    }
+
+
+    // Nueva función para crear bind groups de HUD
+    pub fn bind_hud_texture(
+        &self,
+        device: &wgpu::Device,
+        texture: &Texture,
+        sampler: Option<&wgpu::Sampler>, // Permite usar un sampler personalizado
+    ) -> BindGroup {
+        let default_sampler = sampler.unwrap_or(&texture.sampler);
+        
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("hud_bind_group"),
+            layout: &self.hud_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(default_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&texture.view),
+                },
+            ],
+        })
     }
 }

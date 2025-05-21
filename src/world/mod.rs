@@ -1,11 +1,12 @@
 use camera::Camera;
 use cgmath::point3;
+use tracy::zone;
 use wgpu::BindGroup;
 use winit::event::WindowEvent;
 use world::World;
 
 
-use crate::{render::{pipelines::{GlobalModel, Globals}, renderer::Renderer}, GameState};
+use crate::{hud::HUD, render::{pipelines::{GlobalModel, Globals}, renderer::Renderer}, GameState};
 
 
 pub mod world;
@@ -22,7 +23,8 @@ pub struct Scene {
     pub globals_bind_group: BindGroup,
     pub camera: Camera,
     pub terrain: World,
-    pub last_player_pos: cgmath::Point3<f32>
+    pub last_player_pos: cgmath::Point3<f32>,
+    pub hud: HUD,
 }
 
 impl Scene {
@@ -37,6 +39,15 @@ impl Scene {
             globals: renderer.create_consts(&[Globals::default()]),
 
         };
+
+        let hud = HUD::new(
+            &renderer,
+            &renderer.layouts.global,   
+            renderer.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("HUD Shader"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("../../assets/shaders/hud.wgsl").into()),
+            }),
+        );
 
         let globals_bind_group = renderer.bind_globals(&data);
 
@@ -55,7 +66,8 @@ impl Scene {
             globals_bind_group,
             camera,
             terrain,
-            last_player_pos: point3(0.0, 0.0, 0.0)
+            last_player_pos: point3(0.0, 0.0, 0.0),
+            hud
 
     
         }
@@ -68,6 +80,9 @@ impl Scene {
         dt: std::time::Duration
 
     ) {
+
+        zone!("update scene"); // <- Marca el inicio del bloque
+
 
         //println!("camera pos: {:?}", self.camera.position);
 

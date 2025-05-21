@@ -2,17 +2,25 @@
 pub mod launcher;
 pub mod render;
 pub mod world;
+pub mod ecs;
+pub mod hud;
+
+
+
+use std::time::{Duration, Instant};
+use hud::HUD;
+use tracy::{zone, frame};
 
 use render::renderer::Renderer;
 use world::Scene;
 use winit::{
-        event_loop::EventLoopWindowTarget,
-        event::{WindowEvent, DeviceEvent, KeyEvent, ElementState},
-        keyboard::{PhysicalKey, KeyCode},
-        window::{Window, CursorGrabMode},
-        dpi::PhysicalPosition
+        dpi::PhysicalPosition, event::{self, DeviceEvent, ElementState, KeyEvent, WindowEvent}, event_loop::{self, EventLoopWindowTarget}, keyboard::{KeyCode, PhysicalKey}, window::{CursorGrabMode, Window}
     };
 
+
+use winit:: {
+    event::Event,
+};
 
 #[derive(PartialEq)]
 pub enum GameState {
@@ -28,7 +36,8 @@ pub struct Engine<'a> {
     pub window: &'a Window,
     renderer: Renderer<'a>,
     scene: Scene,
-    state: GameState
+    state: GameState,
+    target_frametime: Duration
 
 }
 
@@ -38,14 +47,26 @@ impl<'a> Engine<'a> {
 
         let mut renderer = Renderer::new(&window);
 
+
         let scene = Scene::new(&mut renderer);
+
+
 
         Self {
             window,
             renderer,
             scene,
             state: GameState::PLAYING,
+            target_frametime: Duration::from_secs_f64(1.0 / 60.0),  // 60 FPS
+
         }
+    }
+
+    pub fn handle_wait(&mut self, _elwt: &EventLoopWindowTarget<()>) {
+
+
+        self.window.request_redraw();
+
     }
 
     //TODO: add global settings as parameter
@@ -61,10 +82,14 @@ impl<'a> Engine<'a> {
             }, 
             WindowEvent::RedrawRequested => {
                 let now = std::time::Instant::now();
-                let dt = now - self.renderer.last_render_time;
+                let elapsed = now - self.renderer.last_render_time;
+                frame!();
+                zone!("redraw request"); // <- Marca el inicio del bloque
+
+
                 self.renderer.last_render_time = now;
-                self.update(dt);
-                match self.renderer.render(&self.scene.terrain, &self.scene.globals_bind_group) {
+                self.update(elapsed);
+                match self.renderer.render(&self.scene.terrain, &self.scene.hud, &self.scene.globals_bind_group) {
                     Ok(_) => {}
                     // Reconfigure the surface if lost
                     Err(wgpu::SurfaceError::Lost) => self.resize(self.renderer.size),
@@ -158,7 +183,7 @@ impl<'a> Engine<'a> {
     }
 
     pub fn handle_device_input(&mut self, event: &DeviceEvent, _: &EventLoopWindowTarget<()>) {
-
+        
         if self.state == GameState::PLAYING {
             self.scene.camera.input(event);
         }

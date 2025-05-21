@@ -1,8 +1,13 @@
+use std::time::Duration;
+
+use tracy::{wgpu_command_encoder, wgpu_render_pass, zone};
 use wgpu::{BindGroup, Error};
 use instant::Instant;
 use winit::window::Window as SysWindow;
+use tracy::wgpu::ProfileContext;
 
-use crate::world::world::World;
+
+use crate::{hud::HUD, world::world::World};
 use super::{consts::Consts, pipelines::{GlobalModel, GlobalsLayouts}, texture::{self, Texture}};
 pub trait Draw {
     fn draw<'a>(
@@ -27,7 +32,8 @@ pub struct Renderer<'a> {
     pub queue: wgpu::Queue,
     pub last_render_time: Instant,
     pub layouts: Layouts,
-    depth_texture: Texture
+    depth_texture: Texture,
+    profile_context: ProfileContext
 }
 
 impl<'a> Renderer<'a> {
@@ -39,7 +45,7 @@ impl<'a> Renderer<'a> {
     
         // The instance is a handle to our GPU
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
@@ -62,7 +68,10 @@ impl<'a> Renderer<'a> {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    required_features: wgpu::Features::POLYGON_MODE_LINE,
+                    required_features: wgpu::Features::POLYGON_MODE_LINE|
+                                        wgpu::Features::TIMESTAMP_QUERY |
+                                        wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS|
+                                        wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
                     required_limits: if cfg!(target_arch = "wasm32") {
                         wgpu::Limits::downlevel_webgl2_defaults()
                     } else {
@@ -100,6 +109,16 @@ impl<'a> Renderer<'a> {
 
         let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
 
+        let profile_context = ProfileContext::with_name(
+            "wgpu",
+            &adapter,
+            &device,
+            &queue,
+            1,
+            Duration::from_secs_f64(1.0 / 60.0)
+        );
+
+
         Self {
             surface,
             device,
@@ -109,7 +128,8 @@ impl<'a> Renderer<'a> {
             window,
             last_render_time,
             layouts,
-            depth_texture
+            depth_texture,
+            profile_context
         }
     }
 
@@ -147,50 +167,69 @@ impl<'a> Renderer<'a> {
 
     /// Update a set of constants with the provided values.
     pub fn update_consts<T: Copy + bytemuck::Pod>(&self, consts: &mut Consts<T>, vals: &[T]) {
+        zone!("update render constants"); // <- Marca el inicio del bloque
+
         consts.update(&self.queue, vals, 0)
     }
 
-    pub fn render(&mut self, terrain: &World, globals: &BindGroup) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, terrain: &World, hud: &HUD, globals: &BindGroup) -> Result<(), wgpu::SurfaceError> {
+
+        zone!("rendering"); // <- Marca el inicio del bloque
+
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+
+        let mut encoder = tracy::wgpu_command_encoder!(
+                self.device,
+                self.profile_context,
+                &wgpu::CommandEncoderDescriptor {
+                    label: Some("Render Encoder"),
+                }
+            );
+        
+
+        // Crear y liberar explícitamente el render pass
         {
-            let mut _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
+            let mut _render_pass = tracy::wgpu_render_pass!(
+                encoder,
+                &wgpu::RenderPassDescriptor {
+                    label: Some("Render Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.1,
+                                g: 0.2,
+                                b: 0.3,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_texture.view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store
                         }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store
+                        stencil_ops: None,
                     }),
-                    stencil_ops: None,
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
+                    occlusion_query_set: None,
+                    timestamp_writes: None,
+                }
+            );
 
             terrain.draw(&mut _render_pass, globals).unwrap();
-        }
+            hud.draw(&mut _render_pass, globals).unwrap();
+        } // _render_pass se libera aquí
+        
 
         
         // submit will accept anything that implements IntoIter
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+        self.profile_context.end_frame(&self.device, &self.queue);
     
         Ok(())
     }
