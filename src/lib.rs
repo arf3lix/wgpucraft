@@ -1,7 +1,8 @@
 
 pub mod launcher;
 pub mod render;
-pub mod world;
+pub mod worldgen;
+pub mod player;
 pub mod ecs;
 pub mod hud;
 
@@ -9,12 +10,13 @@ pub mod hud;
 
 use std::time::{Duration, Instant};
 use hud::HUD;
+use player::raycast::Ray;
 use tracy::{zone, frame};
 
-use render::renderer::Renderer;
-use world::Scene;
+use render::{atlas::MaterialType, renderer::Renderer};
+use worldgen::{biomes::PRAIRIE_PARAMS, Scene};
 use winit::{
-        dpi::PhysicalPosition, event::{self, DeviceEvent, ElementState, KeyEvent, WindowEvent}, event_loop::{self, EventLoopWindowTarget}, keyboard::{KeyCode, PhysicalKey}, window::{CursorGrabMode, Window}
+        dpi::PhysicalPosition, event::{self, DeviceEvent, ElementState, KeyEvent, MouseButton, WindowEvent}, event_loop::{self, EventLoopWindowTarget}, keyboard::{KeyCode, PhysicalKey}, window::{CursorGrabMode, Window}
     };
 
 
@@ -100,6 +102,56 @@ impl<'a> Engine<'a> {
                 }
                 
             },
+
+            // Eventos del mouse
+            WindowEvent::MouseInput { state, button, .. } => {
+                match (button, state) {
+                    (MouseButton::Left, ElementState::Pressed) => {
+
+                        let ray = Ray::from_camera(&self.scene.player.camera, 100.0);
+                        let ray_hit = ray.cast(&self.scene.terrain.chunks);
+
+                        if let Some(hit) = ray_hit {
+
+
+                            if let Some(chunk_index) = self.scene.terrain.chunks.set_block(hit.neighbor_position(), MaterialType::ROCK) {
+
+
+                                let mesh = self.scene.terrain.update_mesh(
+                                    &self.scene.terrain.chunks.blocks_array[chunk_index].read().unwrap(),
+                                    PRAIRIE_PARAMS
+                                );
+
+                                *self.scene.terrain.chunks.mesh_array[chunk_index].write().unwrap() = mesh;
+                                self.scene.terrain.chunk_models[chunk_index].update(&self.renderer.queue, &self.scene.terrain.chunks.mesh_array[chunk_index].read().unwrap(), 0);
+                            }
+                            println!("Clic izquierdo presionado en: {:?}", hit.neighbor_position());
+                            // Aquí puedes añadir tu lógica para el clic izquierdo
+                        } else {
+                            println!("No se golpeó ningún bloque");
+                        }
+                        
+
+
+
+                        // Aquí puedes añadir tu lógica
+                    },
+                    (MouseButton::Right, ElementState::Pressed) => {
+                        // Acción para clic derecho presionado
+                        println!("Clic derecho presionado");
+                        // Aquí puedes añadir tu lógica
+                    },
+                    (MouseButton::Middle, ElementState::Pressed) => {
+                        // Acción para rueda del mouse presionada
+                        println!("Rueda del mouse presionada");
+                        // Aquí puedes añadir tu lógica
+                    },
+                    _ => {}
+                }
+            },
+
+
+
             // WindowEvent::MouseWheel { delta, .. } => {
             //     self.scene.camera.camera_controller.process_scroll(&delta);
             // },
@@ -171,7 +223,7 @@ impl<'a> Engine<'a> {
 
 
     pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
-        self.scene.camera.resize(new_size);
+        self.scene.player.camera.resize(new_size);
         self.renderer.resize(new_size);
 
         
@@ -185,7 +237,7 @@ impl<'a> Engine<'a> {
     pub fn handle_device_input(&mut self, event: &DeviceEvent, _: &EventLoopWindowTarget<()>) {
         
         if self.state == GameState::PLAYING {
-            self.scene.camera.input(event);
+            self.scene.player.camera.input(event);
         }
     }
 
