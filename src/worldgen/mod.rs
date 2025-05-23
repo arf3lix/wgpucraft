@@ -1,4 +1,4 @@
-use camera::Camera;
+use crate::player::{camera::{Camera, Dependants}, Player};
 use cgmath::point3;
 use tracy::zone;
 use wgpu::BindGroup;
@@ -10,7 +10,6 @@ use crate::{hud::HUD, render::{pipelines::{GlobalModel, Globals}, renderer::Rend
 
 
 pub mod world;
-pub mod camera;
 pub mod block;
 pub mod chunk;
 pub mod biomes;
@@ -21,7 +20,7 @@ pub mod noise;
 pub struct Scene {
     pub data: GlobalModel,
     pub globals_bind_group: BindGroup,
-    pub camera: Camera,
+    pub player: Player,
     pub terrain: World,
     pub last_player_pos: cgmath::Point3<f32>,
     pub hud: HUD,
@@ -53,6 +52,8 @@ impl Scene {
 
         let camera = Camera::new(&renderer, (8.0, 12.0, 8.0), cgmath::Deg(-90.0), cgmath::Deg(-20.0));
 
+        let player = Player::new(camera);
+
         let terrain = World::new(
             &renderer,
         );
@@ -64,7 +65,7 @@ impl Scene {
         Self {
             data,
             globals_bind_group,
-            camera,
+            player,
             terrain,
             last_player_pos: point3(0.0, 0.0, 0.0),
             hud
@@ -90,12 +91,12 @@ impl Scene {
         //
 
 
-        self.terrain.update(&renderer.queue, &self.camera.position);
+        self.terrain.update(&renderer.queue, &self.player.camera.position);
         
 
-        self.camera.update_dependants(dt);
+        self.player.camera.update_dependants(dt);
 
-        let cam_deps = &self.camera.dependants;
+        let cam_deps = &self.player.camera.dependants;
 
         renderer.update_consts(&mut self.data.globals, &[Globals::new(
             cam_deps.view_proj
@@ -110,7 +111,7 @@ impl Scene {
         game_state: &GameState
     ) -> bool {
         if *game_state == GameState::PLAYING{
-            self.camera.input_keyboard(&event)
+            self.player.camera.input_keyboard(&event)
         } else {
             false
         }

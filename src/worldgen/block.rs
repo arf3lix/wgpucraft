@@ -4,7 +4,7 @@ use crate::render::atlas::MaterialType;
 
 use crate::render::pipelines::terrain::BlockVertex;
 
-use crate::world::chunk::CHUNK_AREA;
+use crate::worldgen::chunk::CHUNK_AREA;
 
 
 
@@ -31,6 +31,12 @@ pub enum Direction {
 }
 
 impl Direction {
+
+    pub const ALL: [Self; 6] = [
+            Self::TOP, Self::BOTTOM, Self::RIGHT,
+            Self::LEFT, Self::FRONT, Self::BACK
+        ];
+    
     pub fn to_vec(self) -> Vector3<i32> {
         match self {
             Direction::TOP => Vector3::new(0, 1, 0),
@@ -154,15 +160,6 @@ impl Block {
         Vector3::new(self.position[0], self.position[1], self.position[2])
     }
 
-    // pub fn get_world_position(&self) -> [i32; 3] {
-    //     let world_pos = [
-    //         self.position[0] + (self.chunk_offset[0] * CHUNK_AREA as i32),
-    //         self.position[1],
-    //         self.position[2] + (self.chunk_offset[2] * CHUNK_AREA as i32),
-    //     ];
-    //     world_pos
-    // }
-
     // Get the world position of the block
     pub fn get_world_position(&self) -> [i32; 3] {
         [
@@ -193,5 +190,17 @@ impl Block {
         self.chunk_offset = offset;
         self.material_type = new_material_type;
         self.quads = Block::generate_quads(new_material_type, self.position, offset);
+    }
+}
+
+
+impl Default for Block {
+    fn default() -> Self {
+        Block {
+            quads: [Quad::new(MaterialType::AIR, Direction::TOP, [0, 0, 0]); 6],
+            position: [0, 0, 0],
+            material_type: MaterialType::AIR,
+            chunk_offset: [0, 0, 0]
+        }
     }
 }

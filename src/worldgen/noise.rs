@@ -8,6 +8,7 @@ pub struct NoiseGenerator {
 
 impl NoiseGenerator {
     pub fn new(seed: u32) -> Self {
+
         let perlin = Perlin::new(seed);
         Self { perlin}
     }

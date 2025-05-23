@@ -2,35 +2,26 @@
 use std::{collections::VecDeque, sync::{Arc, RwLock, Barrier}};
 use rayon::ThreadPoolBuilder;
 
-use crate::{render::{atlas::{Atlas, MaterialType}, mesh::Mesh, model::DynamicModel, pipelines::terrain::{BlockVertex, TerrainPipeline}, renderer::{Draw, Renderer}}, world::biomes::PRAIRIE_PARAMS};
+use crate::{render::{atlas::{Atlas, MaterialType}, mesh::Mesh, model::DynamicModel, pipelines::terrain::{BlockVertex, create_terrain_pipeline}, renderer::{Draw, Renderer}}, worldgen::biomes::PRAIRIE_PARAMS};
 use crate::render::pipelines::GlobalsLayouts;
-use crate::world::chunk::{self, generate_chunk, Blocks, ChunkArray, CHUNK_AREA, CHUNK_Y_SIZE};
+use crate::worldgen::chunk::{self, generate_chunk, Blocks, ChunkArray, CHUNK_AREA, CHUNK_Y_SIZE};
+use tracy::zone;
 
 
 use cgmath::{EuclideanSpace, Point3, Vector3};
-use chunk::local_pos_to_world;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use wgpu::Queue;
 
 
 pub const LAND_LEVEL: usize = 9;
-pub const CHUNKS_VIEW_SIZE: usize = 8;
+pub const CHUNKS_VIEW_SIZE: usize = 16;
 pub const CHUNKS_ARRAY_SIZE: usize = CHUNKS_VIEW_SIZE * CHUNKS_VIEW_SIZE;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 
-// Atomic counter to assign unique thread identifiers
-static THREAD_COUNTER: AtomicUsize = AtomicUsize::new(1);
+use super::{biomes::BiomeParameters, noise::NoiseGenerator};
 
-// Thread-local variable to store the thread identifier
-thread_local! {
-    static THREAD_ID: usize = THREAD_COUNTER.fetch_add(1, Ordering::SeqCst);
-}
 
-// Function to get the current thread identifier
-fn get_thread_id() -> usize {
-    THREAD_ID.with(|id| *id)
-}
+
 
 
 
@@ -43,7 +34,8 @@ pub struct World {
     updated_indices: Arc<RwLock<[bool; CHUNKS_ARRAY_SIZE]>>,
     center_offset: Vector3<i32>,
     chunks_origin: Vector3<i32>,
-    chunk_models: Vec<DynamicModel<BlockVertex>>
+    pub chunk_models: Vec<DynamicModel<BlockVertex>>,
+    noise_gen: NoiseGenerator
 
 
 }
@@ -58,6 +50,9 @@ impl World {
         let chunk_indices: [Option<usize>; CHUNKS_ARRAY_SIZE] = [None; CHUNKS_ARRAY_SIZE];
         let updated_indices = Arc::new(RwLock::new([false; CHUNKS_ARRAY_SIZE]));
         let mut free_chunk_indices = VecDeque::new();
+
+        let noise_gen = NoiseGenerator::new(10);
+
 
 
         for x in 0..CHUNKS_ARRAY_SIZE {
@@ -77,7 +72,7 @@ impl World {
         );
 
 
-        let World_pipeline = TerrainPipeline::new(
+        let world_pipeline = create_terrain_pipeline(
             &renderer.device,
             &global_layouts,
             shader,
@@ -89,8 +84,8 @@ impl World {
         let chunks_origin = center_offset - Vector3::new(CHUNKS_VIEW_SIZE as i32 / 2, 0, CHUNKS_VIEW_SIZE as i32 / 2);
 
 
-        let mut World = Self {
-            pipeline: World_pipeline.pipeline,
+        let mut world = Self {
+            pipeline: world_pipeline,
             atlas,
             chunks,
             chunk_models,
@@ -98,15 +93,16 @@ impl World {
             chunks_origin,
             updated_indices,
             chunk_indices: Arc::new(RwLock::new(chunk_indices)),
-            free_chunk_indices: Arc::new(RwLock::new(free_chunk_indices))
+            free_chunk_indices: Arc::new(RwLock::new(free_chunk_indices)),
+            noise_gen
         };
 
 
         println!("about to load first chunks");
-        World.load_initial_chunks(&renderer.queue);
+        world.load_initial_chunks(&renderer.queue);
 
 
-        World
+        world
     }
 
 
@@ -116,7 +112,7 @@ impl World {
 
     pub fn load_initial_chunks(&mut self, queue: &Queue) {
 
-        tracy_client::span!("load initial chunks"); // <- Marca el inicio del bloque
+        zone!("load initial chunks"); // <- Marca el inicio del bloque
 
         let chunks_to_update: Vec<usize> = (0..CHUNKS_ARRAY_SIZE)
             .filter(|&i| self.chunk_indices.read().unwrap()[i].is_none())
@@ -136,7 +132,7 @@ impl World {
                 generate_chunk(
                     &mut self.chunks.blocks_array[new_index].write().unwrap(),
                     chunk_offset.into(),
-                    10,
+                    &self.noise_gen,
                     &PRAIRIE_PARAMS
                 );
 
@@ -149,12 +145,9 @@ impl World {
         // Segundo bucle: Calcular los meshes
         for i in chunks_to_update.iter() {
             if let Some(new_index) = self.chunk_indices.read().unwrap()[*i] {
-                let chunk_offset = self.get_chunk_offset(*i);
                 let mesh = self.update_mesh(
                     &self.chunks.blocks_array[new_index].read().unwrap(),
-                    0,
-                    0,
-                    chunk_offset,
+                    PRAIRIE_PARAMS
                 );
                 *self.chunks.mesh_array[new_index].write().unwrap() = mesh;
             }
@@ -162,6 +155,8 @@ impl World {
 
         // Actualizar los modelos de chunk
         (0..CHUNKS_ARRAY_SIZE).for_each(|i| {
+            zone!("load chunk model"); // <- Marca el inicio del bloque
+
             //self.chunk_models[i].update(queue, &self.chunks[i].read().unwrap().mesh, 0);
             self.chunk_models[i].update(queue, &self.chunks.mesh_array[i].read().unwrap(), 0);
         });
@@ -174,17 +169,16 @@ impl World {
 
 
     pub fn load_empty_chunks(&mut self, queue: &Queue) {
-        tracy_client::span!("load empty chunks"); // <- Marca el inicio del bloque
+        zone!("load empty chunks"); // <- Marca el inicio del bloque
 
         let chunks_to_update: Vec<usize> = (0..CHUNKS_ARRAY_SIZE)
             .filter(|&i| self.chunk_indices.read().unwrap()[i].is_none())
             .collect();
 
         chunks_to_update.into_par_iter().for_each(|i| {
-            tracy_client::span!(" ldc: thread_work"); // Span por hilo
+            zone!(" ldc: thread_work"); // Span por hilo
 
             //let c = Arc::clone(&barrier); // Clonar la referencia a la barrera para cada hilo
-            let thread_id = get_thread_id();
 
             //println!("thread_id {:?}", thread_id);
 
@@ -200,7 +194,7 @@ impl World {
                 generate_chunk(
                     &mut self.chunks.blocks_array[new_index].write().unwrap(),
                     chunk_offset.into(),
-                    10,
+                    &self.noise_gen,
                     &PRAIRIE_PARAMS
                 );
                 //println!("just gen chunk at thread_id {:?}", thread_id);
@@ -210,7 +204,10 @@ impl World {
                 // Esperar hasta que todos los hilos hayan llegado a este punto
                 //c .wait();
                 //println!("about to calculate mesh at thread_id {:?}", thread_id);
-                let mesh = self.update_mesh(&self.chunks.blocks_array[new_index].read().unwrap(),new_index, thread_id, chunk_offset);
+                let mesh = self.update_mesh(
+                    &self.chunks.blocks_array[new_index].read().unwrap(),
+                    PRAIRIE_PARAMS
+                );
                 *self.chunks.mesh_array[new_index].write().unwrap() = mesh;
 
                 // Marcar este índice como actualizado
@@ -237,15 +234,27 @@ impl World {
 
 
 
-    pub fn update_mesh(&self, blocks: &Blocks, index: usize, thread_id: usize, chunk_offset: Vector3<i32>) -> Mesh<BlockVertex> {
+    pub fn update_mesh(&self, blocks: &Blocks, biome: BiomeParameters) -> Mesh<BlockVertex> {
         let mut verts = Vec::new();
         let mut indices = Vec::new();
+
+        let max_biome_height = (biome.base_height + biome.amplitude) as usize;
+
+        zone!(" update chunk mesh"); // Span por hilo
+
+
         
         // Iterar solo sobre el área interna (1..CHUNK_AREA+1 para saltar el padding)
         for y in 0..CHUNK_Y_SIZE {
             for z in 1..=CHUNK_AREA {
                 for x in 1..=CHUNK_AREA {
-                    let block = blocks[y][x][z].clone();
+
+                    if y > max_biome_height {
+                        continue;
+                    }
+                    zone!("procesing block vertices"); // Span por hilo
+
+                    let block = blocks[y][x][z];
                     let mut block_vertices = Vec::with_capacity(4 * 6);
                     let mut block_indices: Vec<u16> = Vec::with_capacity(6 * 6);
                     
@@ -336,7 +345,7 @@ impl World {
     //called every frame
     pub fn update(&mut self, queue: &Queue, player_position: &Point3<f32>) {
 
-        tracy_client::span!("update_world"); // <- Marca el inicio del bloque
+        zone!("update_world"); // <- Marca el inicio del bloque
 
         let new_center_offset = Self::world_pos_to_chunk_offset(player_position.to_vec());
         let new_chunk_origin = new_center_offset - Vector3::new(CHUNKS_VIEW_SIZE as i32 / 2, 0, CHUNKS_VIEW_SIZE as i32 / 2);
@@ -370,23 +379,17 @@ impl World {
         self.load_empty_chunks(queue);
     }
 
-    fn is_inner_chunk(&self, chunk_offset: Vector3<i32>) -> bool {
-        let p = chunk_offset - self.chunks_origin;
-        p.x > 0 && p.z > 0 && p.x < (CHUNKS_VIEW_SIZE as i32 - 1) && p.z < (CHUNKS_VIEW_SIZE as i32 - 1)
-    }
-
-
 
 }
 
 impl Draw for World {
     fn draw<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, globals: &'a wgpu::BindGroup) -> Result<(), wgpu::Error> {
 
-        tracy_client::span!("drawing world"); // <- Marca el inicio del bloque
+        zone!("drawing world"); // <- Marca el inicio del bloque
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.atlas.bind_group, &[]);
-        render_pass.set_bind_group(1, &globals, &[]);
+        render_pass.set_bind_group(1, globals, &[]);
         
         for chunk_model in &self.chunk_models {
                 let vertex_buffer = chunk_model.vbuf().slice(..);

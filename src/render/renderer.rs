@@ -7,7 +7,7 @@ use winit::window::Window as SysWindow;
 use tracy::wgpu::ProfileContext;
 
 
-use crate::{hud::HUD, world::world::World};
+use crate::{hud::HUD, worldgen::world::World};
 use super::{consts::Consts, pipelines::{GlobalModel, GlobalsLayouts}, texture::{self, Texture}};
 pub trait Draw {
     fn draw<'a>(

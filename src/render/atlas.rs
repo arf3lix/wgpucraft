@@ -1,7 +1,7 @@
 use anyhow::*;
 
 use crate::render::texture::*;
-use crate::world::block::*;
+use crate::worldgen::block::*;
 
 use super::pipelines::GlobalsLayouts;
 
