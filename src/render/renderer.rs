@@ -7,7 +7,7 @@ use winit::window::Window as SysWindow;
 use tracy::wgpu::ProfileContext;
 
 
-use crate::{hud::HUD, worldgen::world::World};
+use crate::{hud::HUD, terrain_gen::generator::TerrainGen};
 use super::{consts::Consts, pipelines::{GlobalModel, GlobalsLayouts}, texture::{self, Texture}};
 pub trait Draw {
     fn draw<'a>(
@@ -172,7 +172,7 @@ impl<'a> Renderer<'a> {
         consts.update(&self.queue, vals, 0)
     }
 
-    pub fn render(&mut self, terrain: &World, hud: &HUD, globals: &BindGroup) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, terrain: &TerrainGen, hud: &HUD, globals: &BindGroup) -> Result<(), wgpu::SurfaceError> {
 
         zone!("rendering"); // <- Marca el inicio del bloque
 

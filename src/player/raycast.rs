@@ -1,6 +1,6 @@
 
 use cgmath::{InnerSpace, Vector3};
-use crate::{render::atlas::MaterialType, worldgen::{block::Direction, chunk::ChunkArray}};
+use crate::{render::atlas::MaterialType, terrain_gen::{block::Direction, chunk::ChunkArray}};
 use super::camera::Camera;
 
 

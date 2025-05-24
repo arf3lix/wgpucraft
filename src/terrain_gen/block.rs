@@ -4,7 +4,7 @@ use crate::render::atlas::MaterialType;
 
 use crate::render::pipelines::terrain::BlockVertex;
 
-use crate::worldgen::chunk::CHUNK_AREA;
+use super::chunk::CHUNK_AREA;
 
 
 

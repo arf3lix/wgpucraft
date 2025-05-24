@@ -1,5 +1,5 @@
 
-use crate::worldgen::block::Quad;
+use crate::terrain_gen::block::Quad;
 
 
 use super::{pipelines::terrain::BlockVertex, Vertex};

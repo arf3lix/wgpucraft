@@ -8,7 +8,7 @@ use std::f32::consts::FRAC_PI_2;
 
 use crate::render::renderer::Renderer;
 
-use crate::worldgen::{chunk::CHUNK_Y_SIZE, world::CHUNKS_VIEW_SIZE};
+use crate::terrain_gen::{chunk::CHUNK_Y_SIZE, generator::CHUNKS_VIEW_SIZE};
 
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
