@@ -1,6 +1,6 @@
 
 use cgmath::{InnerSpace, Vector3};
-use crate::{render::atlas::MaterialType, terrain_gen::{block::Direction, chunk::ChunkArray}};
+use crate::{render::atlas::MaterialType, terrain_gen::{block::Direction, chunk::ChunkManager}};
 use super::camera::Camera;
 
 
@@ -52,7 +52,7 @@ impl Ray {
     }
 
 
-    pub fn cast(&self, chunk_array: &ChunkArray) -> Option<BlockHit> {
+    pub fn cast(&self, chunk_array: &ChunkManager) -> Option<BlockHit> {
         // Convertimos el origen a coordenadas de bloque
         let mut current_block_pos = Vector3::new(
             self.origin.x.floor() as i32,

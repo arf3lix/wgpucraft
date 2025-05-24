@@ -151,12 +151,12 @@ impl<'a> State<'a> {
 
 
                                 let mesh = self.terrain.update_mesh(
-                                    &self.terrain.chunks.blocks_array[chunk_index].read().unwrap(),
+                                    &self.terrain.chunks.get_chunk(chunk_index).unwrap().read().unwrap(),
                                     PRAIRIE_PARAMS
                                 );
 
-                                *self.terrain.chunks.mesh_array[chunk_index].write().unwrap() = mesh;
-                                self.terrain.chunk_models[chunk_index].update(&self.renderer.queue, &self.terrain.chunks.mesh_array[chunk_index].read().unwrap(), 0);
+                                self.terrain.chunks.get_chunk(chunk_index).unwrap().write().unwrap().mesh = mesh;
+                                self.terrain.chunk_models[chunk_index].update(&self.renderer.queue, &self.terrain.chunks.get_chunk(chunk_index).unwrap().read().unwrap().mesh, 0);
                             }
                             println!("Clic izquierdo presionado en: {:?}", hit.neighbor_position());
                             // Aquí puedes añadir tu lógica para el clic izquierdo
