@@ -52,7 +52,7 @@ impl Ray {
     }
 
 
-    pub fn cast(&self, chunk_array: &ChunkManager) -> Option<BlockHit> {
+    pub fn cast(&self, chunks: &ChunkManager) -> Option<BlockHit> {
         // Convertimos el origen a coordenadas de bloque
         let mut current_block_pos = Vector3::new(
             self.origin.x.floor() as i32,
@@ -127,7 +127,7 @@ impl Ray {
         // Algoritmo DDA
         while traveled_distance < self.length {
             // Verificamos si el bloque actual es sólido
-            if let Some(material) = chunk_array.get_block(current_block_pos) {
+            if let Some(material) = chunks.get_block_material(current_block_pos) {
                 if material != MaterialType::AIR && material != MaterialType::WATER {
                     return Some(BlockHit {
                         position: current_block_pos,
