@@ -14,7 +14,7 @@ use player::{camera::Camera, raycast::Ray, Player};
 use tracy::{zone, frame};
 
 use render::{atlas::MaterialType, pipelines::{GlobalModel, Globals}, renderer::Renderer};
-use terrain_gen::{biomes::PRAIRIE_PARAMS, generator::TerrainGen};
+use terrain_gen::{biomes::PRAIRIE_PARAMS, chunk, generator::TerrainGen};
 use wgpu::BindGroup;
 use winit::{
         dpi::PhysicalPosition, event::{self, DeviceEvent, ElementState, KeyEvent, MouseButton, WindowEvent}, event_loop::{self, EventLoopWindowTarget}, keyboard::{KeyCode, PhysicalKey}, window::{CursorGrabMode, Window}
@@ -147,16 +147,17 @@ impl<'a> State<'a> {
                         if let Some(hit) = ray_hit {
 
 
-                            if let Some(chunk_index) = self.terrain.chunks.set_block(hit.neighbor_position(), MaterialType::ROCK) {
+                            if let Some(chunk_index) = self.terrain.chunks.set_block_material(hit.neighbor_position(), MaterialType::ROCK) {
 
+                                let chunk_arc = self.terrain.chunks.get_chunk(chunk_index).unwrap();
+                                let mut chunk = chunk_arc.write().unwrap();
 
-                                let mesh = self.terrain.update_mesh(
-                                    &self.terrain.chunks.get_chunk(chunk_index).unwrap().read().unwrap(),
-                                    PRAIRIE_PARAMS
-                                );
+                                chunk.update_mesh(PRAIRIE_PARAMS);
+    
 
-                                self.terrain.chunks.get_chunk(chunk_index).unwrap().write().unwrap().mesh = mesh;
-                                self.terrain.chunk_models[chunk_index].update(&self.renderer.queue, &self.terrain.chunks.get_chunk(chunk_index).unwrap().read().unwrap().mesh, 0);
+                                let mut chunk_model = self.terrain.chunk_models[chunk_index].write().unwrap();
+                                
+                                chunk_model.update(&self.renderer.queue, &chunk.mesh, 0);
                             }
                             println!("Clic izquierdo presionado en: {:?}", hit.neighbor_position());
                             // Aquí puedes añadir tu lógica para el clic izquierdo

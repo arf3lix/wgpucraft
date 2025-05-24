@@ -1,8 +1,8 @@
 use std::{collections::VecDeque, sync::{Arc, RwLock}};
 
-use crate::{render::{atlas::{Atlas, MaterialType}, mesh::Mesh, model::DynamicModel, pipelines::terrain::{BlockVertex, create_terrain_pipeline}, renderer::{Draw, Renderer}}, terrain_gen::biomes::PRAIRIE_PARAMS};
+use crate::{render::{atlas::Atlas, model::DynamicModel, pipelines::terrain::{create_terrain_pipeline, BlockVertex}, renderer::{Draw, Renderer}}, terrain_gen::biomes::PRAIRIE_PARAMS};
 use crate::render::pipelines::GlobalsLayouts;
-use crate::terrain_gen::chunk::{generate_chunk, Chunk, ChunkManager, CHUNK_AREA, CHUNK_Y_SIZE, pos_in_chunk_bounds};
+use crate::terrain_gen::chunk::{Chunk, ChunkManager, CHUNK_AREA, CHUNK_Y_SIZE};
 use tracy::zone;
 
 
@@ -16,7 +16,7 @@ pub const CHUNKS_VIEW_SIZE: usize = 16;
 pub const CHUNKS_ARRAY_SIZE: usize = CHUNKS_VIEW_SIZE * CHUNKS_VIEW_SIZE;
 
 
-use super::{biomes::BiomeParameters, noise::NoiseGenerator};
+use super::noise::NoiseGenerator;
 
 
 
@@ -29,10 +29,9 @@ pub struct TerrainGen {
     pub chunks: ChunkManager,
     chunk_indices: Arc<RwLock<[Option<usize>; CHUNKS_ARRAY_SIZE]>>,
     free_chunk_indices: Arc<RwLock<VecDeque<usize>>>,
-    // updated_indices: Arc<RwLock<[bool; CHUNKS_ARRAY_SIZE]>>,
     center_offset: Vector3<i32>,
     chunks_origin: Vector3<i32>,
-    pub chunk_models: Vec<DynamicModel<BlockVertex>>,
+    pub chunk_models: Vec<Arc<RwLock<DynamicModel<BlockVertex>>>>,
     noise_gen: NoiseGenerator
 
 
@@ -60,7 +59,7 @@ impl TerrainGen {
 
             //TODO: handle unwraps
             chunk_model.update(&renderer.queue, &chunks.get_chunk(x).unwrap().read().unwrap().mesh, 0);
-            chunk_models.push(chunk_model);
+            chunk_models.push(Arc::new(RwLock::new(chunk_model)));
             free_chunk_indices.push_back(x);
 
 
@@ -125,23 +124,23 @@ impl TerrainGen {
                 if !self.chunk_in_bounds(chunk_offset) {
                     panic!("Error: Cannot load chunk")
                 }
-                
-                self.chunks.get_chunk(new_index).unwrap().write().unwrap().offset = chunk_offset.into();
-                
-                generate_chunk(
-                    &mut self.chunks.get_chunk(new_index).unwrap().write().unwrap(),
-                    chunk_offset.into(),
-                    &self.noise_gen,
-                    &PRAIRIE_PARAMS
-                );
 
+                let chunk = self.chunks.get_chunk(new_index)
+                    .expect("Error: Chunk not found");
+
+                let mut chunk = chunk.write()
+                    .expect("Error: Failed to lock chunk");
+                
+                chunk.update_blocks(chunk_offset.into(), &self.noise_gen, &PRAIRIE_PARAMS);
+                
                 self.chunk_indices.write().unwrap()[i] = Some(new_index);
 
-                let mesh = self.update_mesh(
-                    &self.chunks.get_chunk(new_index).unwrap().read().unwrap(),
-                    PRAIRIE_PARAMS
-                );
-                self.chunks.get_chunk(new_index).unwrap().write().unwrap().mesh = mesh;
+                chunk.update_mesh(PRAIRIE_PARAMS);
+
+                let mut chunk_model = self.chunk_models[new_index].write().unwrap();
+                
+                chunk_model.update(queue, &chunk.mesh, 0);
+
 
             } else {
                 panic!("Error: No free space for chunk")
@@ -150,81 +149,15 @@ impl TerrainGen {
         });
 
 
-        (0..CHUNKS_ARRAY_SIZE).for_each(|i| {
-            self.chunk_models[i].update(queue, &self.chunks.get_chunk(i).unwrap().read().unwrap().mesh, 0);
-        });
+ 
 
     }
 
 
 
-    pub fn update_mesh(&self, chunk: &Chunk, biome: BiomeParameters) -> Mesh<BlockVertex> {
-        let mut verts = Vec::new();
-        let mut indices = Vec::new();
-
-        let max_biome_height = (biome.base_height + biome.amplitude) as usize;
-
-        zone!(" update chunk mesh"); // Span por hilo
 
 
-        
-        // Iterar solo sobre el área interna (1..CHUNK_AREA+1 para saltar el padding)
-        for y in 0..CHUNK_Y_SIZE {
-            for x in 1..=CHUNK_AREA {
-                for z in 1..=CHUNK_AREA {
 
-                    if y > max_biome_height {
-                        continue;
-                    }
-                    zone!("procesing block vertices"); // Span por hilo
-
-                    let block = chunk.get_block(y, x, z).unwrap();
-                    let mut block_vertices = Vec::with_capacity(4 * 6);
-                    let mut block_indices: Vec<u16> = Vec::with_capacity(6 * 6);
-                    
-                    if block.material_type as i32 == MaterialType::AIR as i32 {
-                        continue;
-                    }
-
-                    let mut quad_counter = 0;
-
-                    for quad in block.quads.iter() {
-                        let neighbor_pos: Vector3<i32> = block.get_vec_position() + quad.side.to_vec();
-                        let visible = self.determine_visibility(&neighbor_pos, chunk);
-
-                        if visible {
-                            block_vertices.extend_from_slice(&quad.vertices);
-                            block_indices.extend_from_slice(&quad.get_indices(quad_counter));
-                            quad_counter += 1;
-                        }
-                    }
-                    
-                    block_indices = block_indices.iter().map(|i| i + verts.len() as u16).collect();
-                    verts.extend(block_vertices);
-                    indices.extend(block_indices);
-                }
-            }
-        }
-
-        Mesh { verts, indices }
-    }
-
-
-    /// Helper function to check visibility of a block
-    fn determine_visibility(&self, neighbor_pos: &Vector3<i32>, chunk: &Chunk) -> bool {
-        if pos_in_chunk_bounds(*neighbor_pos) {
-            // Convertir coordenadas (-1..16) a índices de array (0..17)
-
-            let x_index = (neighbor_pos.x + 1) as usize;
-            let y_index = neighbor_pos.y as usize;
-            let z_index = (neighbor_pos.z + 1) as usize;
-            
-            let neighbor_block = chunk.get_block(y_index, x_index, z_index).unwrap();
-            return neighbor_block.material_type as u16 == MaterialType::AIR as u16;
-        } else {
-            return false;
-        }
-    }
 
     pub fn world_pos_in_bounds(&self, world_pos: Vector3<f32>) -> bool {
         let chunk_offset = Self::world_pos_to_chunk_offset(world_pos);
@@ -316,13 +249,15 @@ impl Draw for TerrainGen {
         render_pass.set_bind_group(1, globals, &[]);
         
         for chunk_model in &self.chunk_models {
-                let vertex_buffer = chunk_model.vbuf().slice(..);
-                let index_buffer = chunk_model.ibuf().slice(..);
-                let num_indices = chunk_model.num_indices;
+            let chunk_model = chunk_model.read().unwrap();
+        
+            let vertex_buffer = chunk_model.vbuf().slice(..);
+            let index_buffer = chunk_model.ibuf().slice(..);
+            let num_indices = chunk_model.num_indices;
 
-                render_pass.set_vertex_buffer(0, vertex_buffer);
-                render_pass.set_index_buffer(index_buffer, wgpu::IndexFormat::Uint16);
-                render_pass.draw_indexed(0..num_indices as u32, 0, 0..1 as _);
+            render_pass.set_vertex_buffer(0, vertex_buffer);
+            render_pass.set_index_buffer(index_buffer, wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..num_indices as u32, 0, 0..1 as _);
         }
         
         Ok(())
