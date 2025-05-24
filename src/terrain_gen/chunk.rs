@@ -82,6 +82,126 @@ impl Chunk {
     }
 
 
+    pub fn update_blocks(&mut self, offset: [i32; 3], noise_generator: &NoiseGenerator, biome: &BiomeParameters) {
+        zone!("generate chunk: full scope"); // Span por hilo
+
+        self.offset = offset; // Actualizamos el offset del chunk
+
+        let max_biome_height = (biome.base_height + biome.amplitude) as usize;
+
+
+        for y in 0..CHUNK_Y_SIZE {
+            for x in 0..CHUNK_AREA_WITH_PADDING {
+                for z in 0..CHUNK_AREA_WITH_PADDING {
+
+                    if y > max_biome_height {
+                        continue; // Saltamos al siguiente bloque
+                    }
+
+                    zone!(" creating single block"); // Span por hilo
+
+
+                    let new_height = {
+                        let local_x = x as i32 - 1;
+                        let local_z = z as i32 - 1;
+                        let world_pos = local_pos_to_world(self.offset, Vector3::new(local_x, y as i32, local_z));
+                        let height_variation = noise_generator.get_height(world_pos.x as f32, world_pos.z as f32, biome.frequency, biome.amplitude);
+                        let new_height = (biome.base_height + height_variation).round() as usize;
+                        new_height
+                    };
+
+
+                    //let new_height = y;
+
+                    let block_type = if y > new_height {
+                        if y <= LAND_LEVEL {
+                            MaterialType::WATER
+                        } else {
+                            MaterialType::AIR
+                        }
+                    } else if y == new_height {
+                        MaterialType::GRASS
+                    } else if y == 0 {
+                        MaterialType::ROCK
+                    } else {
+                        MaterialType::DIRT
+                    };
+                    let current_offset = self.offset; // Copiamos el offset primero
+                    self.get_block_mut(y, x, z).unwrap().update(block_type, current_offset);
+                }
+            }
+        };
+    }
+
+
+    pub fn update_mesh(&mut self, biome: BiomeParameters) {
+        let mut verts = Vec::new();
+        let mut indices = Vec::new();
+
+        let max_biome_height = (biome.base_height + biome.amplitude) as usize;
+
+        zone!(" update chunk mesh"); // Span por hilo
+
+
+        
+        // Iterar solo sobre el área interna (1..CHUNK_AREA+1 para saltar el padding)
+        for y in 0..CHUNK_Y_SIZE {
+            for x in 1..=CHUNK_AREA {
+                for z in 1..=CHUNK_AREA {
+
+                    if y > max_biome_height {
+                        continue;
+                    }
+                    zone!("procesing block vertices"); // Span por hilo
+
+                    let block = self.get_block(y, x, z).unwrap();
+                    let mut block_vertices = Vec::with_capacity(4 * 6);
+                    let mut block_indices: Vec<u16> = Vec::with_capacity(6 * 6);
+                    
+                    if block.material_type as i32 == MaterialType::AIR as i32 {
+                        continue;
+                    }
+
+                    let mut quad_counter = 0;
+
+                    for quad in block.quads.iter() {
+                        let neighbor_pos: Vector3<i32> = block.get_vec_position() + quad.side.to_vec();
+                        let visible = self.is_quad_visible(&neighbor_pos);
+
+                        if visible {
+                            block_vertices.extend_from_slice(&quad.vertices);
+                            block_indices.extend_from_slice(&quad.get_indices(quad_counter));
+                            quad_counter += 1;
+                        }
+                    }
+                    
+                    block_indices = block_indices.iter().map(|i| i + verts.len() as u16).collect();
+                    verts.extend(block_vertices);
+                    indices.extend(block_indices);
+                }
+            }
+        }
+
+        self.mesh = Mesh { verts, indices };
+    }
+
+
+
+    fn is_quad_visible(&self, neighbor_pos: &Vector3<i32>) -> bool {
+        if pos_in_chunk_bounds(*neighbor_pos) {
+            // Convertir coordenadas (-1..16) a índices de array (0..17)
+
+            let x_index = (neighbor_pos.x + 1) as usize;
+            let y_index = neighbor_pos.y as usize;
+            let z_index = (neighbor_pos.z + 1) as usize;
+            
+            let neighbor_block = self.get_block(y_index, x_index, z_index).unwrap();
+            return neighbor_block.material_type as u16 == MaterialType::AIR as u16;
+        } else {
+            return false;
+        }
+    }
+
 
 }
 
@@ -121,7 +241,7 @@ impl ChunkManager {
 
     
     // Obtiene el material de un bloque en una posición mundial
-    pub fn get_block(&self, world_pos: Vector3<i32>) -> Option<MaterialType> {
+    pub fn get_block_material(&self, world_pos: Vector3<i32>) -> Option<MaterialType> {
         let (chunk_offset, local_pos) = world_pos_to_chunk_and_local(world_pos);
         
         // Ajustamos para el padding (local_pos es 0..15, necesitamos -1..16)
@@ -141,7 +261,7 @@ impl ChunkManager {
     }
 
     // Establece el material de un bloque en una posición mundial
-    pub fn set_block(&mut self, world_pos: Vector3<i32>, material: MaterialType) -> Option<usize> {
+    pub fn set_block_material(&mut self, world_pos: Vector3<i32>, material: MaterialType) -> Option<usize> {
         let (chunk_offset, local_pos) = world_pos_to_chunk_and_local(world_pos);
         
         // Ajustamos para el padding (local_pos es 0..15, necesitamos -1..16)
@@ -172,51 +292,6 @@ impl ChunkManager {
 
 
 
-pub fn generate_chunk(chunk: &mut Chunk, offset: [i32; 3], noise_generator: &NoiseGenerator, biome: &BiomeParameters) {
-    zone!("generate chunk: full scope"); // Span por hilo
-
-    let max_biome_height = (biome.base_height + biome.amplitude) as usize;
-
-
-    for y in 0..CHUNK_Y_SIZE {
-        for x in 0..CHUNK_AREA_WITH_PADDING {
-            for z in 0..CHUNK_AREA_WITH_PADDING {
-
-                if y > max_biome_height {
-                    continue; // Saltamos al siguiente bloque
-                }
-
-                zone!(" creating single block"); // Span por hilo
-
-
-                // Convertir coordenadas con padding a coordenadas de mundo
-                let local_x = x as i32 - 1;
-                let local_z = z as i32 - 1;
-                let world_pos = local_pos_to_world(offset, Vector3::new(local_x, y as i32, local_z));
-                let height_variation = noise_generator.get_height(world_pos.x as f32, world_pos.z as f32, biome.frequency, biome.amplitude);
-                let new_height = (biome.base_height + height_variation).round() as usize;
-
-                //let new_height = y;
-
-                let block_type = if y > new_height {
-                    if y <= LAND_LEVEL {
-                        MaterialType::WATER
-                    } else {
-                        MaterialType::AIR
-                    }
-                } else if y == new_height {
-                    MaterialType::GRASS
-                } else if y == 0 {
-                    MaterialType::ROCK
-                } else {
-                    MaterialType::DIRT
-                };
-
-                chunk.get_block_mut(y, x, z).unwrap().update(block_type, offset);
-            }
-        }
-    };
-}
 
 
 
