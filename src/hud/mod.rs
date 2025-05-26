@@ -1,8 +1,10 @@
-use crate::render::{mesh::Mesh, model::Model, pipelines::{hud::{create_hud_pipeline, HUDVertex}, GlobalsLayouts}, renderer::{self, Draw, Renderer}, texture::Texture};
+use icons_atlas::IconType;
+
+use crate::render::{atlas::Atlas, mesh::Mesh, model::Model, pipelines::{hud::{create_hud_pipeline, HUDVertex}, GlobalsLayouts}, renderer::{self, Draw, Renderer}, texture::Texture};
 
 
 
-
+pub mod icons_atlas;
 
 
 
@@ -11,6 +13,9 @@ pub struct HUD {
     pub(crate) pipeline: wgpu::RenderPipeline,
     pub crosshair: HUDElement,
     pub widget: HUDElement,
+    pub icons_atlas: HUDElement,
+    pub selected_icon: IconType,
+
 }
 
 struct HUDElement {
@@ -30,8 +35,12 @@ impl HUD {
         let crosshair_bytes = include_bytes!("../../assets/images/crosshair.png");
         let widget_bytes = include_bytes!("../../assets/images/widget_window.png");
 
+        let icons_bytes = include_bytes!("../../assets/images/icons_atlas.png");
+
         let crosshair_tex = Texture::from_bytes(&renderer.device, &renderer.queue, crosshair_bytes, "crosshair.png").unwrap();
         let widget_tex = Texture::from_bytes(&renderer.device, &renderer.queue, widget_bytes, "crosshair.png").unwrap();
+        let icons_atlas_tex = Texture::from_bytes(&renderer.device, &renderer.queue, icons_bytes, "icons_atlas.png").unwrap();
+
 
         // Crear pipeline usando el hud_layout
         let pipeline = create_hud_pipeline(
@@ -54,25 +63,39 @@ impl HUD {
             None,
         );
 
+        let icons_bind_group = global_layout.bind_hud_texture(
+            &renderer.device,
+            &icons_atlas_tex,
+            None,
+        );
+
+
+
+        let selected_icon = IconType::ROCK; // Puedes cambiar esto según tu lógica
         // Crear geometría para los elementos del HUD
         let (crosshair_verts, crosshair_indices) = create_hud_quad(0.0, 0.0, 0.06, 0.06); // Ajusta tamaño según necesites
-        let (widget_verts, widget_indices) = create_hud_quad(0.8, -0.8, 0.4, 0.4); // Posición y tamaño del widget
+        let (widget_verts, widget_indices) = create_hud_quad(0.85, -0.85, 0.2, 0.2); // Posición y tamaño del widget
+        let (icon_verts, icon_indices) = selected_icon.get_vertex_quad(0.85, -0.85, 0.16,0.16); // Posición del icono en el widget
 
 
 
         
         // Crear modelos
-        let crosshair_mesh = Mesh {
+        let crosshair_model = Model::new(&renderer.device, &Mesh {
             verts: crosshair_verts,
             indices: crosshair_indices,
-        };
-        let widget_mesh = Mesh {
+        }).unwrap();
+
+        let widget_model = Model::new(&renderer.device, &Mesh {
             verts: widget_verts,
             indices: widget_indices,
-        };
+        }).unwrap();
 
-        let crosshair_model = Model::new(&renderer.device, &crosshair_mesh).unwrap();
-        let widget_model = Model::new(&renderer.device, &widget_mesh).unwrap();
+        let icon_model = Model::new(&renderer.device, &Mesh {
+            verts: icon_verts.into_iter().collect(), // Convertimos el array a Vec
+            indices: icon_indices.into_iter().collect(), // Convertimos el array a Vec
+        }).unwrap();
+
 
         // Crear bind groups
         let crosshair = HUDElement {
@@ -87,25 +110,48 @@ impl HUD {
             model: widget_model,
         };
 
+        let icons_atlas = HUDElement {
+            texture: icons_atlas_tex,
+            bind_group: icons_bind_group,
+            model: icon_model,
+        };
+
+
+
         Self {
             pipeline,
             crosshair,
             widget,
+            icons_atlas,
+            selected_icon,
         }
     }
 
-    pub fn update(&mut self) {
+    pub fn update(&mut self, renderer: &Renderer) {
 
+        // Regenerar la geometría del icono seleccionado
+        let (icon_verts, icon_indices) = self.selected_icon
+            .get_vertex_quad(0.85, -0.85, 0.16, 0.16);
+
+        // Actualizar el modelo del atlas de iconos
+        self.icons_atlas.model = Model::new(
+            &renderer.device,
+            &Mesh {
+                verts: icon_verts.into_iter().collect(),
+                indices: icon_indices.into_iter().collect(),
+            }
+        ).expect("Failed to update icon model");
     }
 }
 
 impl Draw for HUD {
     fn draw<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, globals: &'a wgpu::BindGroup) -> Result<(), wgpu::Error> {
+
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(1, globals, &[]);
         
         // Dibujar elementos del HUD
-        for element in &[&self.crosshair, &self.widget] {
+        for element in &[&self.crosshair, &self.widget, &self.icons_atlas, ] {
             render_pass.set_bind_group(0, &element.bind_group, &[]);
             render_pass.set_vertex_buffer(0, element.model.vbuf().slice(..));
             render_pass.set_index_buffer(
@@ -114,6 +160,7 @@ impl Draw for HUD {
             );
             render_pass.draw_indexed(0..element.model.num_indices as u32, 0, 0..1);
         }
+    
         
         Ok(())
     } 
