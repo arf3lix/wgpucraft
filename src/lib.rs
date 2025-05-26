@@ -9,9 +9,8 @@ pub mod hud;
 
 
 use std::time::{Duration, Instant};
-use hud::HUD;
+use hud::{icons_atlas::IconType, HUD};
 use player::{camera::Camera, raycast::Ray, Player};
-use tracy::{zone, frame};
 
 use render::{atlas::MaterialType, pipelines::{GlobalModel, Globals}, renderer::Renderer};
 use terrain_gen::{biomes::PRAIRIE_PARAMS, chunk, generator::TerrainGen};
@@ -24,6 +23,11 @@ use winit::{
 use winit:: {
     event::Event,
 };
+
+use tracy_client::{frame_mark, span};
+
+const FRAME_TIME: Duration = Duration::from_micros(16_666); // 60 FPS
+
 
 #[derive(PartialEq)]
 pub enum GameState {
@@ -44,7 +48,7 @@ pub struct State<'a> {
     pub terrain: TerrainGen,
     pub hud: HUD,
     state: GameState,
-    target_frametime: Duration
+    last_frame_time: Instant,
 
 }
 
@@ -92,16 +96,14 @@ impl<'a> State<'a> {
             terrain,
             hud,
             state: GameState::PLAYING,
-            target_frametime: Duration::from_secs_f64(1.0 / 60.0),  // 60 FPS
+            last_frame_time: Instant::now(),
 
         }
     }
 
     pub fn handle_wait(&mut self, _elwt: &EventLoopWindowTarget<()>) {
 
-
         self.window.request_redraw();
-
     }
 
     //TODO: add global settings as parameter
@@ -116,38 +118,70 @@ impl<'a> State<'a> {
                 self.resize(physical_size);
             }, 
             WindowEvent::RedrawRequested => {
+                let _span = span!("redraw request"); // <- Marca el inicio del bloque
+
                 let now = std::time::Instant::now();
-                let elapsed = now - self.renderer.last_render_time;
-                frame!();
-                zone!("redraw request"); // <- Marca el inicio del bloque
+                let elapsed = now - self.last_frame_time;
+                self.terrain.update(&self.renderer.queue, &self.player.camera.position);
 
+                if elapsed >= FRAME_TIME {
+                    let _inner_span = span!("rendering frame"); // <- Marca el inicio del bloque
+                    frame_mark();
+                    self.last_frame_time = now;
+                    self.update(elapsed);
 
-                self.renderer.last_render_time = now;
-                self.update(elapsed);
-                match self.renderer.render(&self.terrain, &self.hud, &self.globals_bind_group) {
-                    Ok(_) => {}
-                    // Reconfigure the surface if lost
-                    Err(wgpu::SurfaceError::Lost) => self.resize(self.renderer.size),
-                    // The system is out of memory, we should probably quit
-                    Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
-                    // All other errors (Outdated, Timeout) should be resolved by the next frame
-                    Err(e) => eprintln!("{:?}", e)
+                    match self.renderer.render(&self.terrain, &self.hud, &self.globals_bind_group) {
+                        Ok(_) => {}
+                        // Reconfigure the surface if lost
+                        Err(wgpu::SurfaceError::Lost) => self.resize(self.renderer.size),
+                        // The system is out of memory, we should probably quit
+                        Err(wgpu::SurfaceError::OutOfMemory) => elwt.exit(),
+                        // All other errors (Outdated, Timeout) should be resolved by the next frame
+                        Err(e) => eprintln!("{:?}", e)
+                    }
                 }
-                
             },
 
             // Eventos del mouse
             WindowEvent::MouseInput { state, button, .. } => {
                 match (button, state) {
-                    (MouseButton::Left, ElementState::Pressed) => {
 
+                    // Click IZQUIERDO - Eliminar bloque (poner aire)
+                    (MouseButton::Left, ElementState::Pressed) => {
                         let ray = Ray::from_camera(&self.player.camera, 100.0);
                         let ray_hit = ray.cast(&self.terrain.chunks);
 
                         if let Some(hit) = ray_hit {
+                            if let Some(chunk_index) = self.terrain.chunks.set_block_material(hit.position, MaterialType::AIR) {
+                                let chunk_arc = self.terrain.chunks.get_chunk(chunk_index).unwrap();
+                                let mut chunk = chunk_arc.write().unwrap();
 
+                                chunk.update_mesh(PRAIRIE_PARAMS);
+                                
+                                let mut chunk_model = self.terrain.chunk_models[chunk_index].write().unwrap();
+                                chunk_model.update(&self.renderer.queue, &chunk.mesh, 0);
+                            }
+                            println!("Bloque eliminado en: {:?}", hit.position);
+                        } else {
+                            println!("No se golpeó ningún bloque para eliminar");
+                        }
 
-                            if let Some(chunk_index) = self.terrain.chunks.set_block_material(hit.neighbor_position(), MaterialType::ROCK) {
+                        // Aquí puedes añadir tu lógica
+                    },
+                    (MouseButton::Right, ElementState::Pressed) => {
+                        let ray = Ray::from_camera(&self.player.camera, 100.0);
+                        let ray_hit = ray.cast(&self.terrain.chunks);
+
+                        if let Some(hit) = ray_hit {
+                            let material = match self.hud.selected_icon {
+                                    IconType::ROCK => MaterialType::ROCK,
+                                    IconType::DIRT => MaterialType::DIRT,
+                                    IconType::GRASS => MaterialType::GRASS,
+                                    _ => MaterialType::AIR, // No cambiamos si es aire
+                                // Añadir más coincidencias según necesites
+                            };
+
+                            if let Some(chunk_index) = self.terrain.chunks.set_block_material(hit.neighbor_position(), material) {
 
                                 let chunk_arc = self.terrain.chunks.get_chunk(chunk_index).unwrap();
                                 let mut chunk = chunk_arc.write().unwrap();
@@ -164,26 +198,73 @@ impl<'a> State<'a> {
                         } else {
                             println!("No se golpeó ningún bloque");
                         }
-                        
-
-
-
-                        // Aquí puedes añadir tu lógica
-                    },
-                    (MouseButton::Right, ElementState::Pressed) => {
-                        // Acción para clic derecho presionado
-                        println!("Clic derecho presionado");
-                        // Aquí puedes añadir tu lógica
                     },
                     (MouseButton::Middle, ElementState::Pressed) => {
-                        // Acción para rueda del mouse presionada
-                        println!("Rueda del mouse presionada");
-                        // Aquí puedes añadir tu lógica
+                        let ray = Ray::from_camera(&self.player.camera, 100.0);
+                        let ray_hit = ray.cast(&self.terrain.chunks);
+
+                        if let Some(hit) = ray_hit {
+                            if let Some(block) = self.terrain.chunks.get_block_material(hit.position) {
+                                // Actualizar el icono seleccionado en el HUD según el material
+                                self.hud.selected_icon = match block {
+                                    MaterialType::ROCK => IconType::ROCK,
+                                    MaterialType::DIRT => IconType::DIRT,
+                                    MaterialType::GRASS => IconType::GRASS,
+                                    _ => self.hud.selected_icon, // No cambiamos si es aire
+                                    
+                                    // Añadir más coincidencias según necesites
+                                };
+
+                                self.hud.update(&self.renderer);
+                                
+                                // Actualizar visualmente el HUD
+    
+                            }
+                        } else {
+                            println!("No se encontró bloque para copiar");
+                        }
                     },
                     _ => {}
                 }
             },
 
+            WindowEvent::MouseWheel { delta, .. } => {
+                match delta {
+                    // Para sistemas Windows y Linux
+                    event::MouseScrollDelta::LineDelta(_, y) => {
+                        let direction = match delta {
+                            // Para sistemas Windows y Linux
+                            event::MouseScrollDelta::LineDelta(_, y) => {
+                                if y > 0.0 { 1 } else { -1 }
+                            },
+                            // Para sistemas macOS (puede venir en píxeles)
+                            event::MouseScrollDelta::PixelDelta(pos) => {
+                                if pos.y > 0.0 { 1 } else { -1 }
+                            }
+                        };
+
+                        self.hud.selected_icon = match direction {
+                            1 => self.hud.selected_icon.next(),   // Rueda hacia arriba
+                            -1 => self.hud.selected_icon.prev(),  // Rueda hacia abajo
+                            _ => self.hud.selected_icon,         // No cambia si no es 1 o -1
+                        };
+
+                        
+                        // Actualizar el HUD
+                        self.hud.update(&self.renderer);
+                    },
+                     // Para sistemas macOS (puede venir en píxeles)
+                    event::MouseScrollDelta::PixelDelta(pos) => {
+                        if pos.y > 0.0 {
+                            println!("Rueda del mouse hacia arriba (avance)");
+                            // Lógica para cuando la rueda sube
+                        } else if pos.y < 0.0 {
+                            println!("Rueda del mouse hacia abajo (retroceso)");
+                            // Lógica para cuando la rueda baja
+                        }
+                    }
+                }
+            },
 
 
             // WindowEvent::MouseWheel { delta, .. } => {
@@ -267,10 +348,9 @@ impl<'a> State<'a> {
 
      pub fn update(&mut self,dt: std::time::Duration) {
 
-        zone!("update state"); // <- Marca el inicio del bloque
+        let _span = span!("update state"); // <- Marca el inicio del bloque
 
         self.renderer.update();
-        self.terrain.update(&self.renderer.queue, &self.player.camera.position);
         
 
         self.player.camera.update_dependants(dt);
