@@ -1,10 +1,9 @@
 use std::time::Duration;
 
-use tracy::{wgpu_command_encoder, wgpu_render_pass, zone};
-use wgpu::{BindGroup, Error};
+use tracy_client::span;
+use wgpu::{BindGroup, CommandEncoder, Error};
 use instant::Instant;
 use winit::window::Window as SysWindow;
-use tracy::wgpu::ProfileContext;
 
 
 use crate::{hud::HUD, terrain_gen::generator::TerrainGen};
@@ -30,10 +29,8 @@ pub struct Renderer<'a> {
     pub window: &'a SysWindow,
     pub config: wgpu::SurfaceConfiguration,
     pub queue: wgpu::Queue,
-    pub last_render_time: Instant,
     pub layouts: Layouts,
     depth_texture: Texture,
-    profile_context: ProfileContext
 }
 
 impl<'a> Renderer<'a> {
@@ -41,7 +38,6 @@ impl<'a> Renderer<'a> {
         window: &'a SysWindow,
     ) -> Self {
         let size = window.inner_size();
-        let last_render_time = instant::Instant::now();
     
         // The instance is a handle to our GPU
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
@@ -98,7 +94,7 @@ impl<'a> Renderer<'a> {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: surface_caps.present_modes[0],
+            present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: surface_caps.alpha_modes[0],
             desired_maximum_frame_latency: 2,
             view_formats: vec![],
@@ -109,14 +105,7 @@ impl<'a> Renderer<'a> {
 
         let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
 
-        let profile_context = ProfileContext::with_name(
-            "wgpu",
-            &adapter,
-            &device,
-            &queue,
-            1,
-            Duration::from_secs_f64(1.0 / 60.0)
-        );
+
 
 
         Self {
@@ -126,10 +115,8 @@ impl<'a> Renderer<'a> {
             config,
             size,
             window,
-            last_render_time,
             layouts,
             depth_texture,
-            profile_context
         }
     }
 
@@ -167,31 +154,36 @@ impl<'a> Renderer<'a> {
 
     /// Update a set of constants with the provided values.
     pub fn update_consts<T: Copy + bytemuck::Pod>(&self, consts: &mut Consts<T>, vals: &[T]) {
-        zone!("update render constants"); // <- Marca el inicio del bloque
+        let _span = span!("update render constants"); // <- Marca el inicio del bloque
 
         consts.update(&self.queue, vals, 0)
     }
 
     pub fn render(&mut self, terrain: &TerrainGen, hud: &HUD, globals: &BindGroup) -> Result<(), wgpu::SurfaceError> {
 
-        zone!("rendering"); // <- Marca el inicio del bloque
 
+
+        let get_texture_span = span!("get current texture");
         let output = self.surface.get_current_texture()?;
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        drop(get_texture_span);
+        
 
-        let mut encoder = tracy::wgpu_command_encoder!(
-                self.device,
-                self.profile_context,
+        let create_view_span = span!("create view");
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        drop(create_view_span);
+
+        let create_encoder_span = span!("create encoder");
+        let mut encoder = self.device.create_command_encoder(
                 &wgpu::CommandEncoderDescriptor {
                     label: Some("Render Encoder"),
                 }
             );
-        
+        drop(create_encoder_span);
 
         // Crear y liberar explícitamente el render pass
         {
-            let mut _render_pass = tracy::wgpu_render_pass!(
-                encoder,
+            let create_render_pass =  span!("create render pass");
+            let mut _render_pass = encoder.begin_render_pass(
                 &wgpu::RenderPassDescriptor {
                     label: Some("Render Pass"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -219,17 +211,23 @@ impl<'a> Renderer<'a> {
                     timestamp_writes: None,
                 }
             );
+            drop(create_render_pass);
 
             terrain.draw(&mut _render_pass, globals).unwrap();
+            
             hud.draw(&mut _render_pass, globals).unwrap();
+
+            
         } // _render_pass se libera aquí
         
-
         
         // submit will accept anything that implements IntoIter
+        let submit_encoder = span!("submit encoder");
         self.queue.submit(std::iter::once(encoder.finish()));
+        drop(submit_encoder);
+        let prenset_output = span!("present output");
         output.present();
-        self.profile_context.end_frame(&self.device, &self.queue);
+        drop(prenset_output);
     
         Ok(())
     }
