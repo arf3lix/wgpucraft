@@ -1,6 +1,8 @@
 use image::GenericImageView;
 use anyhow::*;
 
+
+#[derive(Clone)]
 pub struct Texture {
     pub tex: wgpu::Texture,
     pub view: wgpu::TextureView,

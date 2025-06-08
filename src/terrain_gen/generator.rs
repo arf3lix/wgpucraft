@@ -3,11 +3,11 @@ use std::{collections::VecDeque, sync::{Arc, RwLock}};
 use crate::{render::{atlas::Atlas, model::DynamicModel, pipelines::terrain::{create_terrain_pipeline, BlockVertex}, renderer::{Draw, Renderer}}, terrain_gen::biomes::PRAIRIE_PARAMS};
 use crate::render::pipelines::GlobalsLayouts;
 use crate::terrain_gen::chunk::{Chunk, ChunkManager, CHUNK_AREA, CHUNK_Y_SIZE};
-use tracy::zone;
 
 
 use cgmath::{EuclideanSpace, Point3, Vector3};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use tracy_client::span;
 use wgpu::Queue;
 
 
@@ -108,15 +108,55 @@ impl TerrainGen {
 
 
 
+
+    //called every frame
+    pub fn update(&mut self, queue: &Queue, player_position: &Point3<f32>) {
+
+        let _span = span!("update_world"); // <- Marca el inicio del bloque
+
+        let new_center_offset = Self::world_pos_to_chunk_offset(player_position.to_vec());
+        let new_chunk_origin = new_center_offset - Vector3::new(CHUNKS_VIEW_SIZE as i32 / 2, 0, CHUNKS_VIEW_SIZE as i32 / 2);
+
+        if new_chunk_origin == self.chunks_origin {
+            return;
+        }
+
+        self.center_offset = new_center_offset;
+        self.chunks_origin = new_chunk_origin;
+        //println!("chunks origin updated {:?}", self.chunks_origin);
+
+        let chunk_indices_copy = self.chunk_indices.read().unwrap().clone();
+        self.chunk_indices = Arc::new(RwLock::new([None; CHUNKS_ARRAY_SIZE]));
+
+        for i in 0..CHUNKS_ARRAY_SIZE {
+            match chunk_indices_copy[i] {
+                Some(chunk_index) => {
+                    let chunk_offset = self.chunks.get_chunk(chunk_index).unwrap().read().unwrap().offset.clone();
+                    if self.chunk_in_bounds(chunk_offset.into()) {
+                        let new_chunk_world_index = self.get_chunk_world_index(chunk_offset.into());
+                        self.chunk_indices.write().unwrap()[new_chunk_world_index] = Some(chunk_index);
+                    } else {
+                        self.free_chunk_indices.write().unwrap().push_back(chunk_index);
+                    }
+                }
+                None => {}
+            }
+        }
+
+        self.load_empty_chunks(queue);
+    }
+
+
+
     pub fn load_empty_chunks(&mut self, queue: &Queue) {
-        zone!("load empty chunks"); // <- Marca el inicio del bloque
+        let _span = span!("load empty chunks"); // <- Marca el inicio del bloque
 
         let chunks_to_update: Vec<usize> = (0..CHUNKS_ARRAY_SIZE)
             .filter(|&i| self.chunk_indices.read().unwrap()[i].is_none())
             .collect();
 
         chunks_to_update.into_par_iter().for_each(|i| {
-            zone!(" ldc: thread_work"); // Span por hilo
+            let _inner_span = span!(" ldc: thread_work"); // Span por hilo
 
             let new_index = self.free_chunk_indices.write().unwrap().pop_front();
             if let Some(new_index) = new_index {
@@ -148,13 +188,7 @@ impl TerrainGen {
         
         });
 
-
- 
-
     }
-
-
-
 
 
 
@@ -199,50 +233,13 @@ impl TerrainGen {
 
 
 
-    //called every frame
-    pub fn update(&mut self, queue: &Queue, player_position: &Point3<f32>) {
-
-        zone!("update_world"); // <- Marca el inicio del bloque
-
-        let new_center_offset = Self::world_pos_to_chunk_offset(player_position.to_vec());
-        let new_chunk_origin = new_center_offset - Vector3::new(CHUNKS_VIEW_SIZE as i32 / 2, 0, CHUNKS_VIEW_SIZE as i32 / 2);
-
-        if new_chunk_origin == self.chunks_origin {
-            return;
-        }
-
-        self.center_offset = new_center_offset;
-        self.chunks_origin = new_chunk_origin;
-        //println!("chunks origin updated {:?}", self.chunks_origin);
-
-        let chunk_indices_copy = self.chunk_indices.read().unwrap().clone();
-        self.chunk_indices = Arc::new(RwLock::new([None; CHUNKS_ARRAY_SIZE]));
-
-        for i in 0..CHUNKS_ARRAY_SIZE {
-            match chunk_indices_copy[i] {
-                Some(chunk_index) => {
-                    let chunk_offset = self.chunks.get_chunk(chunk_index).unwrap().read().unwrap().offset.clone();
-                    if self.chunk_in_bounds(chunk_offset.into()) {
-                        let new_chunk_world_index = self.get_chunk_world_index(chunk_offset.into());
-                        self.chunk_indices.write().unwrap()[new_chunk_world_index] = Some(chunk_index);
-                    } else {
-                        self.free_chunk_indices.write().unwrap().push_back(chunk_index);
-                    }
-                }
-                None => {}
-            }
-        }
-
-        self.load_empty_chunks(queue);
-    }
-
 
 }
 
 impl Draw for TerrainGen {
     fn draw<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, globals: &'a wgpu::BindGroup) -> Result<(), wgpu::Error> {
 
-        zone!("drawing world"); // <- Marca el inicio del bloque
+        let _span = span!("drawing world"); // <- Marca el inicio del bloque
 
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.atlas.bind_group, &[]);

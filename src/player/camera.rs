@@ -1,5 +1,5 @@
 use cgmath::*;
-use tracy::zone;
+use tracy_client::span;
 use winit::event::*;
 use winit::dpi::PhysicalPosition;
 use instant::Duration;
@@ -45,7 +45,7 @@ impl Camera {
             0.1,
             (CHUNKS_VIEW_SIZE * CHUNK_Y_SIZE as usize) as f32,
         );
-        let camera_controller = CameraController::new(10.0, 2.1);
+        let camera_controller = CameraController::new(12.0, 2.1);
 
         let mut camera = Self {
             position: position.into(),
@@ -109,7 +109,7 @@ impl Camera {
     }
 
     pub fn update_dependants(&mut self, dt: Duration) {
-        zone!("update camera deps"); // <- Marca el inicio del bloque
+        let _span = span!("update camera deps"); // <- Marca el inicio del bloque
 
         self.update_camera_controller(dt);
         let view_proj:  [[f32; 4]; 4] = (self.projection.calc_matrix() * self.calc_matrix()).into();

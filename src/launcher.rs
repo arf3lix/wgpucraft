@@ -1,9 +1,9 @@
+use tracy_client::span;
 use winit:: {
     event::{Event, StartCause},
     event_loop::ControlFlow,
 };
 use log::{trace, debug, info, warn, error};
-use tracy::zone;
 
 use winit::{
     event_loop::EventLoop,
@@ -40,11 +40,12 @@ pub fn run() {
                 state.handle_window_event(event, elwt)
             }
             Event::DeviceEvent { ref event, .. } => {
-                zone!("handling device input"); // <- Marca el inicio del bloque
+                let _span = span!("handling device input"); 
 
                 state.handle_device_input(event, elwt);
             }
             Event::AboutToWait => {
+
                 state.handle_wait(elwt);
             }
             _ => ()

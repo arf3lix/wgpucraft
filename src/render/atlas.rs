@@ -5,7 +5,6 @@ use crate::terrain_gen::block::*;
 
 use super::pipelines::GlobalsLayouts;
 
-#[allow(dead_code)]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MaterialType {
     DIRT,
@@ -17,10 +16,10 @@ pub enum MaterialType {
 }
 
 impl MaterialType {
-    // Función asociada para crear un estado activo
     pub fn is_transparent(&self) -> bool {
         match self {
             MaterialType::AIR => true, // Devuelve true si es AIR
+            MaterialType::WATER => true, // Devuelve true si es WATER
             _ => false, // Devuelve false para cualquier otro material
         }
     }

@@ -2,13 +2,13 @@ use std::sync::{Arc, RwLock};
 
 
 use cgmath::Vector3;
-use tracy::zone;
+use tracy_client::span;
 
 
 use crate::render::{atlas::MaterialType, mesh::Mesh, pipelines::terrain::BlockVertex};
 
 
-use super::{biomes::BiomeParameters, block::Block, noise::NoiseGenerator, generator::LAND_LEVEL};
+use super::{biomes::BiomeParameters, block::{self, Block}, generator::LAND_LEVEL, noise::NoiseGenerator};
 
 
 pub const CHUNK_Y_SIZE: usize = 100;
@@ -83,7 +83,7 @@ impl Chunk {
 
 
     pub fn update_blocks(&mut self, offset: [i32; 3], noise_generator: &NoiseGenerator, biome: &BiomeParameters) {
-        zone!("generate chunk: full scope"); // Span por hilo
+        let _span = span!("generate chunk: full scope"); // Span por hilo
 
         self.offset = offset; // Actualizamos el offset del chunk
 
@@ -98,17 +98,19 @@ impl Chunk {
                         continue; // Saltamos al siguiente bloque
                     }
 
-                    zone!(" creating single block"); // Span por hilo
+                    let _inner_span = span!(" creating single block"); 
 
+                    if y < (biome.base_height - 1.0) as usize  {
+                        self.get_block_mut(y, x, z).unwrap()
+                        .update(MaterialType::DIRT, offset);
+                        continue;
+                    }
 
-                    let new_height = {
-                        let local_x = x as i32 - 1;
-                        let local_z = z as i32 - 1;
-                        let world_pos = local_pos_to_world(self.offset, Vector3::new(local_x, y as i32, local_z));
-                        let height_variation = noise_generator.get_height(world_pos.x as f32, world_pos.z as f32, biome.frequency, biome.amplitude);
-                        let new_height = (biome.base_height + height_variation).round() as usize;
-                        new_height
-                    };
+                    let local_x = x as i32 - 1;
+                    let local_z = z as i32 - 1;
+                    let world_pos = local_pos_to_world(self.offset, Vector3::new(local_x, y as i32, local_z));
+                    let height_variation = noise_generator.get_height(world_pos.x as f32, world_pos.z as f32, biome.frequency, biome.amplitude);
+                    let new_height = (biome.base_height + height_variation).round() as usize;
 
 
                     //let new_height = y;
@@ -126,8 +128,7 @@ impl Chunk {
                     } else {
                         MaterialType::DIRT
                     };
-                    let current_offset = self.offset; // Copiamos el offset primero
-                    self.get_block_mut(y, x, z).unwrap().update(block_type, current_offset);
+                    self.get_block_mut(y, x, z).unwrap().update(block_type, offset);
                 }
             }
         };
@@ -140,7 +141,7 @@ impl Chunk {
 
         let max_biome_height = (biome.base_height + biome.amplitude) as usize;
 
-        zone!(" update chunk mesh"); // Span por hilo
+        let _span = span!(" update chunk mesh"); // Span por hilo
 
 
         
@@ -152,7 +153,7 @@ impl Chunk {
                     if y > max_biome_height {
                         continue;
                     }
-                    zone!("procesing block vertices"); // Span por hilo
+                    let _inner_span = span!("procesing block vertices"); // Span por hilo
 
                     let block = self.get_block(y, x, z).unwrap();
                     let mut block_vertices = Vec::with_capacity(4 * 6);
